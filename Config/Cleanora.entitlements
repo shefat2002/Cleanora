@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Deliberately NON-SANDBOXED.
+	     A sandboxed app can only read its own container, which would make
+	     scanning other apps' caches impossible. App Store distribution is
+	     therefore out of scope; ship via Developer ID + notarization. -->
+</dict>
+</plist>
