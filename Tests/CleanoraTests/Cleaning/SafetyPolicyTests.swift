@@ -57,6 +57,41 @@ final class SafetyPolicyTests: TempHomeTestCase {
         XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
     }
 
+    // Large-files carve-out: recoverable trash + review risk + user-selected,
+    // anywhere under home (spec §7 "Review — the user decides").
+    func testLargeFileUnderArbitraryHomePathAllowedWithCarveOut() throws {
+        let bigFile = tempHome.appendingPathComponent("Projects/big.bin")
+        try FixtureBuilder.makeTree(in: bigFile.deletingLastPathComponent(), [("big.bin", 10)])
+        let item = makeItem(
+            path: bigFile, category: .largeFiles,
+            risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testLargeFileCarveOutStillRespectsBlockedPaths() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Documents/big.bin"),
+            category: .largeFiles, risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testLargeFileCarveOutRequiresMoveToTrash() {
+        // Permanent removal stays forbidden outside the allowlist even for
+        // large files.
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Projects/big.bin"),
+            category: .largeFiles, risk: .review, deletionMethod: .removeContents
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testNonLargeFileOutsideAllowlistStillRejected() {
+        let item = makeItem(path: tempHome.appendingPathComponent("Projects/thing"))
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
     // I3
     func testBlockedFragmentWinsEvenInsideAllowedRoot() {
         let item = makeItem(path: tempHome.appendingPathComponent("Library/Caches/Mobile Documents/thing"))

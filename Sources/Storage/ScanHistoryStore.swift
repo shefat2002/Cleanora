@@ -54,6 +54,17 @@ public struct ScanHistoryStore: Sendable {
         Array(readableHistory().prefix(max(0, limit)))
     }
 
+    /// Removes every history entry (History screen "Clear History"). The
+    /// last scan is deliberately kept — it is dashboard state, not history.
+    /// Persistence failures are logged, never thrown.
+    public func clearHistory() {
+        do {
+            try historyFile.write([])
+        } catch {
+            Self.log.error("history clear failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Day-grouped history for the History screen: newest day first, entries
     /// within a day newest first.
     public func historyGroupedByDay() -> [(day: Date, entries: [CleanupHistoryEntry])] {

@@ -21,8 +21,11 @@ public struct SafetyPolicy: Sendable {
     private let excludedRoots: [String]
     private let blockedPaths: [String]
     private let blockedPathFragments: [String]
+    /// Canonicalized home — base for the large-files carve-out below.
+    private let homePath: String
 
     public init(
+        home: URL,
         allowedRoots: [URL],
         blockedPaths: [URL],
         blockedPathFragments: [String],
@@ -32,11 +35,13 @@ public struct SafetyPolicy: Sendable {
         self.excludedRoots = excludedRoots.map { Self.canonicalized($0).path }
         self.blockedPaths = blockedPaths.map { Self.canonicalized($0).path }
         self.blockedPathFragments = blockedPathFragments
+        self.homePath = Self.canonicalized(home).path
     }
 
     public static func standard(home: URL, tempRoot: URL) -> SafetyPolicy {
         let appDirs = AppDirectories(home: home)
         return SafetyPolicy(
+            home: home,
             allowedRoots: [
                 home.appendingPathComponent("Library/Caches", isDirectory: true),
                 home.appendingPathComponent("Library/Logs", isDirectory: true),
@@ -52,7 +57,9 @@ public struct SafetyPolicy: Sendable {
                 home.appendingPathComponent("Library/Developer/CoreSimulator/Caches", isDirectory: true),
                 home.appendingPathComponent("Library/Caches/Homebrew", isDirectory: true),
                 home.appendingPathComponent(".npm/_cacache", isDirectory: true),
+                home.appendingPathComponent(".npm/_logs", isDirectory: true),
                 home.appendingPathComponent("Library/Caches/pip", isDirectory: true),
+                home.appendingPathComponent(".cache/pip", isDirectory: true),
                 home.appendingPathComponent("Library/Caches/Yarn", isDirectory: true),
                 home.appendingPathComponent(".yarn/berry/cache", isDirectory: true),
             ],
@@ -136,7 +143,20 @@ public struct SafetyPolicy: Sendable {
         if excludedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             throw Violation.blockedPath(path)
         }
-        guard allowedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else {
+        // Large-files carve-out: spec §7 puts large files in "Review" — the
+        // USER decides, file by file. They live anywhere in the home, which
+        // no fixed allowlist can cover, so instead of silently dropping them
+        // at cleanup time the gate admits them under ALL of these conditions:
+        // category .largeFiles, recoverable .moveToTrash, .review risk (never
+        // auto-selected), inside the home, and still subject to every check
+        // below (blocked paths, fragments, symlink leaves, selection,
+        // confirmation). Anything else outside the allowlist stays rejected.
+        let inAllowedRoot = allowedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") })
+        let largeFileCarveOut = item.category == .largeFiles
+            && item.deletionMethod == .moveToTrash
+            && item.riskLevel == .review
+            && (path == homePath || path.hasPrefix(homePath + "/"))
+        if !inAllowedRoot && !largeFileCarveOut {
             throw Violation.outsideAllowedRoots(path)
         }
         if blockedPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {

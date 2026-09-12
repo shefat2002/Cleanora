@@ -128,6 +128,49 @@ final class ScanHistoryStoreTests: TempHomeTestCase {
         XCTAssertEqual(store.history(), [entry])
     }
 
+    // MARK: - Clear (P-11 History screen)
+
+    // "Clear History" removes the entries only: the last scan is dashboard
+    // state, not history, and must survive the clear.
+    func testClearHistoryRemovesAllEntriesButKeepsLastScan() {
+        let store = makeStore()
+        let result = makeResult()
+        store.saveLastScan(result)
+        store.appendHistory(makeEntry(date: Date(timeIntervalSince1970: 1)))
+        store.appendHistory(makeEntry(date: Date(timeIntervalSince1970: 2)))
+
+        store.clearHistory()
+
+        XCTAssertEqual(store.history(), [])
+        XCTAssertEqual(store.lastScan(), result)
+    }
+
+    func testClearHistoryEmptiesDayGrouping() {
+        let store = makeStore()
+        store.appendHistory(makeEntry(date: Date(timeIntervalSince1970: 1)))
+
+        store.clearHistory()
+
+        XCTAssertTrue(store.historyGroupedByDay().isEmpty)
+    }
+
+    func testClearHistoryThenAppendStartsFresh() {
+        let store = makeStore()
+        store.appendHistory(makeEntry(date: Date(timeIntervalSince1970: 1)))
+        store.clearHistory()
+
+        let entry = makeEntry(date: Date(timeIntervalSince1970: 2))
+        store.appendHistory(entry)
+
+        XCTAssertEqual(store.history(), [entry])
+    }
+
+    // Clearing with no history file on disk is a harmless no-op.
+    func testClearHistoryWithoutHistoryFileIsHarmless() {
+        XCTAssertNoThrow(makeStore().clearHistory())
+        XCTAssertEqual(makeStore().history(), [])
+    }
+
     func testSchemaVersionSurvivesRoundTrip() {
         let store = makeStore()
         let entry = makeEntry(date: Date(timeIntervalSince1970: 42))
