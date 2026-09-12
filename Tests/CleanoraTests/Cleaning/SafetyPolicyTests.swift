@@ -44,6 +44,19 @@ final class SafetyPolicyTests: TempHomeTestCase {
         XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
     }
 
+    // Scanner-produced roots (engine-a C-04/C-05) must validate.
+    func testCrashReporterRootAllowed() throws {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Application Support/CrashReporter/2026-09-01.ops")
+        )
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testPrivateTmpRootAllowed() throws {
+        let item = makeItem(path: URL(fileURLWithPath: "/private/tmp/cleanora-user-file.tmp"))
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
     // I3
     func testBlockedFragmentWinsEvenInsideAllowedRoot() {
         let item = makeItem(path: tempHome.appendingPathComponent("Library/Caches/Mobile Documents/thing"))

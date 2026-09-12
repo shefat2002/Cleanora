@@ -39,7 +39,11 @@ public struct SafetyPolicy: Sendable {
             allowedRoots: [
                 home.appendingPathComponent("Library/Caches", isDirectory: true),
                 home.appendingPathComponent("Library/Logs", isDirectory: true),
+                home.appendingPathComponent("Library/Application Support/CrashReporter", isDirectory: true),
                 tempRoot,
+                // Shared temp root — TempScanner only reports user-owned
+                // entries, but every entry it produces must validate here.
+                URL(fileURLWithPath: "/private/tmp", isDirectory: true),
                 home.appendingPathComponent(".Trash", isDirectory: true),
                 home.appendingPathComponent("Library/Developer/Xcode/DerivedData", isDirectory: true),
                 home.appendingPathComponent("Library/Developer/Xcode/Archives", isDirectory: true),

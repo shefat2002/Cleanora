@@ -11,7 +11,8 @@ public struct CleanupItem: Identifiable, Hashable, Codable, Sendable {
     public let appName: String?
     public let category: ScanCategory
     public let path: URL
-    /// Logical bytes, sum of regular-file sizes.
+    /// Allocated bytes (APFS-accurate, matches what freeing returns);
+    /// logical size only where allocation data is unavailable.
     public let size: Int64
     public let fileCount: Int?
     public let riskLevel: RiskLevel
