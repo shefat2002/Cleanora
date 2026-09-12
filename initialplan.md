@@ -1,5 +1,3 @@
-Absolutely. Since you're turning the Bash cleaner into a **native-feeling macOS GUI cleaner**, I'd position it more like a lightweight, transparent alternative to bloated "Mac cleaner" apps.
-
 ## 1. Name 
 
 **Cleanora**
