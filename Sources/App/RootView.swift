@@ -15,7 +15,7 @@ struct RootView: View {
             case .cleaning: CleaningView().transition(.opacity)
             case .completion: CompletionView().transition(.opacity)
             case .history: HistoryView().transition(.opacity)
-            case .developer: DeveloperPlaceholderView().transition(.opacity)
+            case .developer: DeveloperCleanupView().transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: environment.navigation.route)

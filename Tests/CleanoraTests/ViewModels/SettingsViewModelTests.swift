@@ -30,8 +30,33 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(updated, [.trash], "a scan needs at least one category")
     }
 
+    // MARK: Copy
+
     func testHintsAreNonEmpty() {
-        XCTAssertFalse(SettingsViewModel.launchAtLoginUnavailableHint.isEmpty)
-        XCTAssertFalse(SettingsViewModel.developerDataUnavailableHint.isEmpty)
+        XCTAssertFalse(SettingsViewModel.developerDataHint.isEmpty)
+        XCTAssertFalse(SettingsViewModel.autoCleanHint.isEmpty)
+        XCTAssertFalse(SettingsViewModel.confirmationHint.isEmpty)
+    }
+
+    func testLaunchAtLoginStatusDescribesSuccess() {
+        XCTAssertEqual(
+            SettingsViewModel.launchAtLoginStatus(outcome: .succeeded, enabled: true),
+            "Cleanora opens when you log in."
+        )
+        XCTAssertEqual(
+            SettingsViewModel.launchAtLoginStatus(outcome: .succeeded, enabled: false),
+            "Cleanora no longer opens at login."
+        )
+    }
+
+    func testLaunchAtLoginStatusSurfacesTheServiceManagementError() {
+        let status = SettingsViewModel.launchAtLoginStatus(
+            outcome: .failed("Operation not permitted"), enabled: false
+        )
+        XCTAssertTrue(
+            status.contains("Operation not permitted"),
+            "dev builds are unsigned — the SMError must be readable in the row, never swallowed"
+        )
+        XCTAssertTrue(status.hasPrefix("Couldn't update launch at login"))
     }
 }

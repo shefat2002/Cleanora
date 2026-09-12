@@ -78,6 +78,20 @@ enum DateFormatting {
         return normalized(formatter.string(from: date))
     }
 
+    /// "Sep 1, 2026" — large-file modified column.
+    static func mediumDate(
+        _ date: Date,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return normalized(formatter.string(from: date))
+    }
+
     private static func formatter(
         dateStyle: DateFormatter.Style,
         timeStyle: DateFormatter.Style,

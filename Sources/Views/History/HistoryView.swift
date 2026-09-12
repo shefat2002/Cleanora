@@ -6,13 +6,14 @@ struct HistoryView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var viewModel: HistoryViewModel?
     @State private var selectedEntry: CleanupHistoryEntry?
+    @State private var showClearConfirmation = false
 
     var body: some View {
         Group {
             if let viewModel {
                 if viewModel.groups.isEmpty {
                     VStack(spacing: 0) {
-                        header
+                        header(viewModel)
                         Divider()
                         EmptyStateView(
                             systemImage: "clock.arrow.circlepath",
@@ -36,9 +37,21 @@ struct HistoryView: View {
             }
             viewModel?.refresh()
         }
+        .confirmationDialog(
+            "Clear cleanup history?",
+            isPresented: $showClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear History", role: .destructive) {
+                viewModel?.clearHistory()
+                selectedEntry = nil
+            }
+        } message: {
+            Text("This forgets the list of previous cleanups. It does not delete any files.")
+        }
     }
 
-    private var header: some View {
+    private func header(_ viewModel: HistoryViewModel?) -> some View {
         HStack(spacing: Design.spacingM) {
             Button {
                 environment.navigation.go(.dashboard)
@@ -50,6 +63,12 @@ struct HistoryView: View {
             Text("Cleanup History")
                 .font(.title3.weight(.semibold))
             Spacer()
+            if let viewModel, viewModel.canClearHistory, !viewModel.groups.isEmpty {
+                Button("Clear History", role: .destructive) {
+                    showClearConfirmation = true
+                }
+                .accessibilityHint("Asks for confirmation, then forgets all previous cleanups. No files are removed.")
+            }
         }
         .padding(.horizontal, Design.spacingL)
         .padding(.vertical, Design.spacingM)
@@ -57,7 +76,7 @@ struct HistoryView: View {
 
     private func content(_ viewModel: HistoryViewModel) -> some View {
         VStack(spacing: 0) {
-            header
+            header(viewModel)
             Divider()
             HStack(spacing: 0) {
                 list(viewModel)

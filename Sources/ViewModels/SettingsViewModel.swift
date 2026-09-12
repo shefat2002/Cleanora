@@ -20,7 +20,30 @@ struct SettingsViewModel {
         return updated
     }
 
-    static let launchAtLoginUnavailableHint = "Launch at login is coming in a later release."
-    static let developerDataUnavailableHint =
-        "Developer caches (Xcode, Homebrew, npm, pip, Yarn) arrive in a later release."
+    // MARK: - Copy
+
+    static let developerDataHint =
+        "Adds Xcode, Homebrew, npm, pip, Yarn and Docker caches to the next scan."
+    static let autoCleanHint =
+        "After a scan, safe items are cleaned without asking. Review items always wait for you, and Trash is never touched automatically."
+    static let confirmationHint =
+        "When both confirmation settings are off, cleaning starts without a confirmation screen. Trash always asks."
+
+    /// Settings-row status for the Launch at login toggle (P-15). Success
+    /// states describe what was registered; a failure surfaces the
+    /// ServiceManagement error verbatim — dev builds are unsigned, so the
+    /// error is expected there and must be readable, never thrown away.
+    static func launchAtLoginStatus(
+        outcome: LoginItemController.Outcome,
+        enabled: Bool
+    ) -> String {
+        switch outcome {
+        case .succeeded:
+            return enabled
+                ? "Cleanora opens when you log in."
+                : "Cleanora no longer opens at login."
+        case .failed(let message):
+            return "Couldn't update launch at login: \(message)"
+        }
+    }
 }

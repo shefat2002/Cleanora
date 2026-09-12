@@ -152,4 +152,95 @@ final class ResultsViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isEmpty)
         XCTAssertFalse(viewModel.canClean)
     }
+
+    // MARK: Cancelled-cleanup reconciliation (backlog fix)
+
+    func testReconciliationDropsMissingFilesAndCountsThem() {
+        let kept = VMFixtures.item(name: "Kept", category: .logs, size: 100, risk: .safe)
+        let gone = VMFixtures.item(name: "Gone", category: .logs, size: 900, risk: .safe)
+        let source = VMFixtures.scanResult(items: [kept, gone])
+        let outcome = ResultsViewModel.reconciling(source) { $0.path.hasSuffix("Kept") }
+
+        XCTAssertEqual(outcome.droppedCount, 1)
+        XCTAssertEqual(outcome.result.items.map(\.name), ["Kept"])
+        XCTAssertEqual(outcome.result.id, source.id, "reconciliation keeps the scan's identity")
+    }
+
+    func testReconciliationWithEverythingPresentIsIdentity() {
+        let kept = VMFixtures.item(name: "Kept", category: .logs, size: 100, risk: .safe)
+        let result = VMFixtures.scanResult(items: [kept])
+        let outcome = ResultsViewModel.reconciling(result, fileExists: { _ in true })
+
+        XCTAssertEqual(outcome.droppedCount, 0)
+        XCTAssertEqual(outcome.result, result, "nothing dropped returns the result untouched")
+    }
+
+    /// The convenience entry point ResultsView uses: real files on disk, one
+    /// of them already gone (removed by the cancelled run).
+    func testReconcilingInitDropsGoneFilesAndReportsTheCount() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cleanora-reconcile-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let keptURL = folder.appendingPathComponent("kept.bin")
+        try Data(repeating: 0, count: 16).write(to: keptURL)
+        let kept = CleanupItem(
+            name: "Kept", category: .logs, path: keptURL, size: 16,
+            riskLevel: .safe, reason: "test", deletionMethod: .trashDirectory
+        )
+        let gone = CleanupItem(
+            name: "Gone", category: .logs, path: folder.appendingPathComponent("gone.bin"),
+            size: 32, riskLevel: .safe, reason: "test", deletionMethod: .trashDirectory
+        )
+
+        let viewModel = ResultsViewModel(reconciling: VMFixtures.scanResult(items: [kept, gone]))
+        XCTAssertEqual(viewModel.droppedInCancelledRunCount, 1)
+        XCTAssertEqual(viewModel.sections[0].items.map(\.name), ["Kept"])
+    }
+
+    func testCancelledRunBannerCopy() {
+        XCTAssertNil(ResultsViewModel.cancelledRunBanner(droppedCount: 0))
+        XCTAssertEqual(
+            ResultsViewModel.cancelledRunBanner(droppedCount: 1),
+            "1 item was already cleaned in the cancelled run."
+        )
+        XCTAssertEqual(
+            ResultsViewModel.cancelledRunBanner(droppedCount: 3),
+            "3 items were already cleaned in the cancelled run."
+        )
+    }
+
+    // MARK: Large-file rows (P-09)
+
+    func testLargeFileModifiedDatesAreProbedAtInitOnlyForLargeFiles() {
+        let large = VMFixtures.item(name: "Big", category: .largeFiles, size: 900, risk: .review)
+        let cache = VMFixtures.item(name: "Cache", category: .applicationCaches, size: 100, risk: .safe)
+        let stamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let viewModel = ResultsViewModel(result: VMFixtures.scanResult(items: [large, cache])) { url in
+            url.path.hasSuffix("Big") ? stamp : nil
+        }
+
+        XCTAssertEqual(viewModel.largeFileModifiedDates[large.id], stamp)
+        XCTAssertNil(viewModel.largeFileModifiedDates[cache.id], "only large-file rows are statted")
+    }
+
+    func testLargeFileModifiedLineFormatsAndHidesWhenUnknown() {
+        let stamp = VMFixtures.gregorianGMT.date(
+            from: DateComponents(year: 2026, month: 9, day: 1, hour: 9)
+        )!
+        let line = ResultsViewModel.largeFileModifiedLine(
+            for: stamp,
+            locale: VMFixtures.posixLocale,
+            timeZone: TimeZone(identifier: "GMT")!
+        )
+        XCTAssertEqual(line, "Modified Sep 1, 2026")
+        XCTAssertNil(ResultsViewModel.largeFileModifiedLine(for: nil))
+    }
+
+    func testCleaningSelectionProvidingExposesSourceScanID() {
+        let viewModel = ResultsViewModel(result: VMFixtures.scanResult(items: []))
+        let provider: any CleaningSelectionProviding = viewModel
+        XCTAssertEqual(provider.sourceScanID, viewModel.result.id)
+    }
 }

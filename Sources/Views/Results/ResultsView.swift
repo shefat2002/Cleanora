@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Spec §6: scan results with per-category disclosure, app grouping, tri-state
 /// selection and a sticky summary bar. Everything the user sees is real scan
-/// output; review items start unselected and say so.
+/// output; review items start unselected and say so. Large files appear as
+/// their own section with modified dates and Reveal in Finder.
 struct ResultsView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var viewModel: ResultsViewModel?
@@ -10,6 +11,7 @@ struct ResultsView: View {
     @State private var whyCategory: ScanCategory?
     @State private var whyItem: CleanupItem?
     @State private var confirmSheetVisible = false
+    @State private var cancelledRunBanner: String?
 
     var body: some View {
         Group {
@@ -34,16 +36,26 @@ struct ResultsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            guard viewModel == nil, let result = environment.lastScanResult else { return }
-            let fresh = ResultsViewModel(result: result)
-            viewModel = fresh
+            if environment.takeResultsReconciliation(), let result = environment.lastScanResult {
+                // Backlog fix: after a cancelled cleanup the stored result
+                // still lists items that were already removed — re-derive the
+                // review without them and say how many were dropped.
+                let fresh = ResultsViewModel(reconciling: result)
+                viewModel = fresh
+                collapsedCategories = []
+                cancelledRunBanner = ResultsViewModel.cancelledRunBanner(
+                    droppedCount: fresh.droppedInCancelledRunCount
+                )
+            } else if viewModel == nil, let result = environment.lastScanResult {
+                viewModel = ResultsViewModel(result: result)
+            }
         }
         .sheet(item: $whyCategory) { category in
             WhyInfoSheet(category: category, item: whyItem)
         }
         .sheet(isPresented: $confirmSheetVisible) {
             if let viewModel {
-                ConfirmCleanSheet(viewModel: viewModel) { request in
+                ConfirmCleanSheet(selection: viewModel) { request in
                     environment.beginCleaning(request)
                     environment.navigation.go(.cleaning)
                 }
@@ -57,6 +69,12 @@ struct ResultsView: View {
             Divider()
             ScrollView {
                 LazyVStack(spacing: Design.spacingM) {
+                    if let cancelledBanner = cancelledRunBanner {
+                        banner(labelText: cancelledBanner, systemImage: "clock.arrow.circlepath")
+                    }
+                    if let fallback = environment.autoCleanFallbackMessage {
+                        banner(labelText: fallback, systemImage: "info.circle")
+                    }
                     ForEach(viewModel.sections) { section in
                         CategoryDisclosureSection(
                             section: section,
@@ -80,6 +98,14 @@ struct ResultsView: View {
                             onWhyItem: { item in
                                 whyItem = item
                                 whyCategory = item.category
+                            },
+                            modifiedLine: { item in
+                                ResultsViewModel.largeFileModifiedLine(
+                                    for: viewModel.largeFileModifiedDates[item.id]
+                                )
+                            },
+                            onReveal: { item in
+                                environment.revealInFinder(item.path)
                             }
                         )
                     }
@@ -94,9 +120,31 @@ struct ResultsView: View {
                 selectedCount: viewModel.selectedCount,
                 canClean: viewModel.canClean
             ) {
-                confirmSheetVisible = true
+                clean(viewModel)
             }
         }
+    }
+
+    private func banner(labelText: String, systemImage: String) -> some View {
+        HStack(spacing: Design.spacingS) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+            Text(labelText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        .padding(Design.spacingM)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: Design.cornerRadius)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.cornerRadius)
+                .strokeBorder(.quaternary)
+        )
+        .accessibilityElement(children: .combine)
     }
 
     private func header(_ viewModel: ResultsViewModel) -> some View {
@@ -128,5 +176,24 @@ struct ResultsView: View {
         }
         .padding(.bottom, Design.spacingM)
         .accessibilityElement(children: .contain)
+    }
+
+    /// P-13: the confirmation sheet is skipped only when both confirmation
+    /// settings are off — and never when anything destructive is selected,
+    /// which CleaningFlowPolicy enforces regardless of settings.
+    private func clean(_ viewModel: ResultsViewModel) {
+        if CleaningFlowPolicy.requiresConfirmation(
+            confirmBeforeCleaning: environment.preferences.value.confirmBeforeCleaning,
+            askBeforeDeleting: environment.preferences.value.askBeforeDeleting,
+            items: viewModel.selectedItems
+        ) {
+            confirmSheetVisible = true
+        } else {
+            environment.beginCleaning(AppEnvironment.cleaningRequest(
+                for: viewModel.selectedItems,
+                scanResultID: viewModel.sourceScanID
+            ))
+            environment.navigation.go(.cleaning)
+        }
     }
 }

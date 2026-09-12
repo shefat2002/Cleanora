@@ -55,8 +55,10 @@ final class ScanViewModel {
             keys: coordinator.scanners.map(\.progressKey),
             makeStream: { coordinator.run() },
             onFinish: { result in
-                environment.finishScan(result)
-                environment.navigation.go(.results)
+                // P-13: the app layer decides between the plain Results route
+                // and an auto-clean (safe items, no confirmation) — including
+                // the loud fallback when auto-clean had to be skipped.
+                environment.scanDidFinish(result)
             }
         )
     }

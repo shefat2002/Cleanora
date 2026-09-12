@@ -13,6 +13,24 @@ final class DashboardViewModel {
         var id: String { category.rawValue }
     }
 
+    /// One stacked-bar segment for the disk overview (P-10). `startBytes` is
+    /// precomputed so the chart renders deterministic intervals and the
+    /// layout itself stays pure and testable.
+    struct DiskSegment: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case junk(ScanCategory)
+            case otherUsed
+            case free
+        }
+
+        let kind: Kind
+        let bytes: Int64
+        let startBytes: Int64
+        var endBytes: Int64 { startBytes + bytes }
+        let label: String
+        var id: String { label }
+    }
+
     private(set) var lastScan: ScanResult?
     private(set) var diskOverview: DiskOverview?
     private(set) var hasFullDiskAccess = true
@@ -97,6 +115,55 @@ final class DashboardViewModel {
             guard bytes > 0 else { return nil }
             return CategoryRow(category: category, bytes: bytes)
         }
+    }
+
+    /// P-10: one part-to-whole bar — cleanable junk per category, then the
+    /// rest of the used space, then free space. Junk is measured from the
+    /// last scan (0 when none), used/free from the disk probe, so the
+    /// placeholder case is a used/free-only bar.
+    static func diskSegments(scan: ScanResult?, overview: DiskOverview?) -> [DiskSegment] {
+        guard let overview, overview.totalCapacity > 0 else { return [] }
+        var segments: [DiskSegment] = []
+        var cursor: Int64 = 0
+        for row in categoryRows(for: scan) {
+            segments.append(DiskSegment(
+                kind: .junk(row.category),
+                bytes: row.bytes,
+                startBytes: cursor,
+                label: "\(row.category.displayName) (cleanable)"
+            ))
+            cursor += row.bytes
+        }
+        let used = max(0, overview.usedBytes - cursor)
+        if used > 0 {
+            segments.append(DiskSegment(
+                kind: .otherUsed,
+                bytes: used,
+                startBytes: cursor,
+                label: "Used space"
+            ))
+            cursor += used
+        }
+        if overview.availableForImportantUsage > 0 {
+            segments.append(DiskSegment(
+                kind: .free,
+                bytes: overview.availableForImportantUsage,
+                startBytes: cursor,
+                label: "Free space"
+            ))
+        }
+        return segments
+    }
+
+    /// Spoken summary for the whole chart, so VoiceOver gets one sentence
+    /// instead of relying on mark order.
+    static func diskSummaryLine(for overview: DiskOverview?, scan: ScanResult?) -> String? {
+        guard let overview else { return nil }
+        let junk = categoryRows(for: scan).reduce(Int64(0)) { $0 + $1.bytes }
+        let base = "\(overview.availableForImportantUsage.formattedByteCount) free of " +
+            "\(overview.totalCapacity.formattedByteCount)"
+        guard junk > 0 else { return base }
+        return "\(base), \(junk.formattedByteCount) cleanable"
     }
 
     /// Health copy. Measured, never alarming: the worst phrase is "needs

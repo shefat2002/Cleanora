@@ -69,6 +69,9 @@ struct CleaningView: View {
             // Cancelled mid-run: nothing further will be removed, go back to
             // the review. (.finished routes to Completion via onFinish.)
             if phase == .cancelled {
+                // Items already removed must not linger with stale sizes —
+                // Results re-derives its state and banners the difference.
+                environment.markResultsStaleAfterCancelledCleanup()
                 environment.navigation.go(.results)
             }
         }

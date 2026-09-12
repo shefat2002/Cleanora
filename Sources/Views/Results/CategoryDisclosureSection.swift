@@ -12,6 +12,10 @@ struct CategoryDisclosureSection: View {
     let onToggleItem: (UUID, Bool) -> Void
     let onWhyCategory: () -> Void
     let onWhyItem: (CleanupItem) -> Void
+    /// Large-file rows carry a modified-date line and a Reveal in Finder
+    /// action; other categories ignore both.
+    var modifiedLine: (CleanupItem) -> String? = { _ in nil }
+    var onReveal: (CleanupItem) -> Void = { _ in }
 
     /// Groups the user collapsed; absence means expanded.
     @State private var collapsedGroups: Set<String> = []
@@ -99,6 +103,8 @@ struct CategoryDisclosureSection: View {
                 ForEach(section.items) { item in
                     CleanupItemRow(
                         item: item,
+                        modifiedLine: modifiedLine(item),
+                        onReveal: { onReveal(item) },
                         onToggle: { onToggleItem(item.id, $0) },
                         onWhy: { onWhyItem(item) }
                     )
@@ -165,6 +171,8 @@ struct CategoryDisclosureSection: View {
                     ForEach(group.items) { item in
                         CleanupItemRow(
                             item: item,
+                            modifiedLine: modifiedLine(item),
+                            onReveal: { onReveal(item) },
                             onToggle: { onToggleItem(item.id, $0) },
                             onWhy: { onWhyItem(item) }
                         )

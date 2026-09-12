@@ -52,15 +52,28 @@ final class AppEnvironment {
     private(set) var lastCleanupReport: CleanupReport?
     /// Set by the confirmation sheet, consumed and cleared by CleaningView.
     private(set) var pendingCleaning: CleaningRequest?
+    /// Non-nil when auto-clean was requested but skipped (P-13): Results
+    /// states out loud why it did not clean by itself.
+    private(set) var autoCleanFallbackMessage: String?
+    /// Set when a cleanup was cancelled partway; the next Results appearance
+    /// re-derives its view model and drops already-removed items.
+    private(set) var resultsNeedReconciliation = false
+    /// Launch-at-login row status (P-15): success copy or the ServiceManagement
+    /// error, so a failed registration is loud instead of a dead toggle.
+    private(set) var loginItemStatusMessage: String?
 
     private let appDirectories: AppDirectories
     private let permissionProbe: PermissionProbe
+    private let loginItem: LoginItemController
+    private let fileRevealer: FileRevealer
     private var cachedHistoryStore: ScanHistoryStore?
 
     init(
         preferences: PreferencesStore? = nil,
         scanEnvironment: ScanEnvironment = .live(),
-        permissionProbe: PermissionProbe? = nil
+        permissionProbe: PermissionProbe? = nil,
+        loginItem: LoginItemController? = nil,
+        fileRevealer: FileRevealer? = nil
     ) {
         // Fixture mode must not write the user's real preference domain —
         // scope defaults to a fixture-named suite there. An explicitly passed
@@ -77,6 +90,8 @@ final class AppEnvironment {
         self.scanEnvironment = scanEnvironment
         self.appDirectories = AppDirectories(environment: scanEnvironment)
         self.permissionProbe = permissionProbe ?? .live(environment: scanEnvironment)
+        self.loginItem = loginItem ?? .live()
+        self.fileRevealer = fileRevealer ?? .live()
     }
 
     // MARK: - Engines (the only construction sites in the app)
@@ -89,12 +104,15 @@ final class AppEnvironment {
         return store
     }
 
-    /// Stateless value type; rebuilt per scan because options vary.
+    /// Stateless value type; rebuilt per scan because options vary. The
+    /// catalog resolves the stored options first (developer gate → real
+    /// scanner set), so the coordinator and the scanners see the same values.
     func scanCoordinator(options: ScanOptions) -> ScanCoordinator {
-        ScanCoordinator(
-            scanners: ScannerCatalog.scanners(for: options, environment: scanEnvironment),
+        let resolved = ScannerCatalog.resolvedOptions(options)
+        return ScanCoordinator(
+            scanners: ScannerCatalog.scanners(for: resolved, environment: scanEnvironment),
             environment: scanEnvironment,
-            options: options,
+            options: resolved,
             diskInfo: DiskInfoProvider()
         )
     }
@@ -125,7 +143,83 @@ final class AppEnvironment {
 
     func finishScan(_ result: ScanResult) {
         lastScanResult = result
+        // A new scan replaces the old review wholesale — any pending
+        // cancelled-run reconciliation belongs to the previous result.
+        resultsNeedReconciliation = false
         scanHistoryStore.saveLastScan(result)
+    }
+
+    /// Scan finish + P-13 auto-clean wiring. When "Automatically clean safe
+    /// items" is on and the preselected set is safe to clean unattended, the
+    /// cleanup starts without the confirmation sheet; every other path shows
+    /// Results, and a skipped auto-clean says why.
+    func scanDidFinish(_ result: ScanResult) {
+        finishScan(result)
+        let decision = CleaningFlowPolicy.autoCleanDecision(
+            isEnabled: preferences.value.automaticallyCleanSafeItems,
+            result: result
+        )
+        switch decision {
+        case .beginImmediately(let items):
+            autoCleanFallbackMessage = nil
+            beginCleaning(Self.cleaningRequest(for: items, scanResultID: result.id))
+            navigation.go(.cleaning)
+        case .showResults(let fallbackReason):
+            autoCleanFallbackMessage = fallbackReason
+            navigation.go(.results)
+        }
+    }
+
+    /// Single construction site for CleaningRequest on paths where the flow
+    /// policy has already established that confirmation is not required.
+    static func cleaningRequest(for items: [CleanupItem], scanResultID: UUID?) -> CleaningRequest {
+        CleaningRequest(
+            items: items,
+            confirmed: Set(items.map(\.id)),
+            destructiveConfirmed: false,
+            selectedBytes: items.reduce(0) { $0 + $1.size },
+            scanResultID: scanResultID
+        )
+    }
+
+    /// Cancelled cleanup: the next Results appearance must re-derive its
+    /// state, because items removed before the cancel still sit in the old
+    /// view model with stale sizes.
+    func markResultsStaleAfterCancelledCleanup() {
+        resultsNeedReconciliation = true
+    }
+
+    /// Consumed exactly once, by ResultsView when it appears.
+    func takeResultsReconciliation() -> Bool {
+        let needed = resultsNeedReconciliation
+        resultsNeedReconciliation = false
+        return needed
+    }
+
+    // MARK: - Launch at login (P-15)
+
+    /// Attempts the real registration and persists the preference only on
+    /// success; a failure keeps the toggle at its persisted value and surfaces
+    /// the ServiceManagement error as row status — loud, never silent.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        let outcome = loginItem.setEnabled(enabled)
+        switch outcome {
+        case .succeeded:
+            preferences.update { $0.launchAtLogin = enabled }
+            loginItemStatusMessage = SettingsViewModel.launchAtLoginStatus(
+                outcome: outcome, enabled: enabled
+            )
+        case .failed:
+            loginItemStatusMessage = SettingsViewModel.launchAtLoginStatus(
+                outcome: outcome, enabled: preferences.value.launchAtLogin
+            )
+        }
+    }
+
+    // MARK: - Finder reveal (P-09)
+
+    func revealInFinder(_ url: URL) {
+        fileRevealer.reveal(url)
     }
 
     func beginCleaning(_ request: CleaningRequest) {

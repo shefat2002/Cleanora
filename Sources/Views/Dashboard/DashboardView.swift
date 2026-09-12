@@ -31,6 +31,16 @@ struct DashboardView: View {
         HStack(spacing: Design.spacingM) {
             Spacer()
             Button {
+                environment.navigation.go(.developer)
+            } label: {
+                Image(systemName: "hammer")
+            }
+            .buttonStyle(.borderless)
+            .help("Developer cleanup")
+            .accessibilityLabel("Developer cleanup")
+            .accessibilityHint("Shows developer caches for Xcode, Node, Python, Homebrew and Docker.")
+
+            Button {
                 environment.navigation.go(.history)
             } label: {
                 Image(systemName: "clock.arrow.circlepath")
@@ -106,6 +116,20 @@ struct DashboardView: View {
                     Text(lastScanLine)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                if let overview = viewModel.diskOverview {
+                    DiskUsageChartView(
+                        segments: DashboardViewModel.diskSegments(
+                            scan: viewModel.lastScan,
+                            overview: overview
+                        ),
+                        summaryLine: DashboardViewModel.diskSummaryLine(
+                            for: overview,
+                            scan: viewModel.lastScan
+                        )
+                    )
+                    .frame(maxWidth: Design.narrowColumnWidth)
                 }
 
                 if !viewModel.categoryRows.isEmpty {

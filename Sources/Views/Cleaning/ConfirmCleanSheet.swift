@@ -1,19 +1,20 @@
 import SwiftUI
 
 /// The last stop before deletion (spec §6/U-09): selected items grouped by
-/// category with sizes. When anything selected is Trash or flagged
-/// destructive, a distinct irreversible warning plus an explicit checkbox is
-/// required before the Clean button enables — that flag becomes
+/// category with sizes. Takes any `CleaningSelectionProviding` so Results and
+/// Developer Cleanup share one sheet. When anything selected is Trash or
+/// flagged destructive, a distinct irreversible warning plus an explicit
+/// checkbox is required before the Clean button enables — that flag becomes
 /// `destructiveConfirmed` for the executor (invariant I6).
 struct ConfirmCleanSheet: View {
-    let viewModel: ResultsViewModel
+    let selection: any CleaningSelectionProviding
     let onConfirm: (CleaningRequest) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var destructiveConfirmed = false
 
     private var groups: [(category: ScanCategory, items: [CleanupItem])] {
-        ResultsViewModel.confirmGroups(for: viewModel.selectedItems)
+        ResultsViewModel.confirmGroups(for: selection.selectedItems)
     }
 
     var body: some View {
@@ -21,7 +22,7 @@ struct ConfirmCleanSheet: View {
             VStack(spacing: Design.spacingXS) {
                 Text("Clean selected items")
                     .font(.title3.weight(.bold))
-                Text("\(viewModel.selectedBytes.formattedByteCount) — \(ResultsViewModelSummary.countLine(viewModel.selectedCount))")
+                Text("\(selection.selectedBytes.formattedByteCount) — \(ResultsViewModelSummary.countLine(selection.selectedCount))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -35,7 +36,7 @@ struct ConfirmCleanSheet: View {
                     ForEach(groups, id: \.category) { group in
                         groupSection(group)
                     }
-                    if viewModel.requiresDestructiveConfirmation {
+                    if selection.requiresDestructiveConfirmation {
                         destructiveWarning
                     }
                 }
@@ -52,7 +53,7 @@ struct ConfirmCleanSheet: View {
                 Spacer()
                 Button("Clean", action: confirm)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(viewModel.requiresDestructiveConfirmation && !destructiveConfirmed)
+                    .disabled(selection.requiresDestructiveConfirmation && !destructiveConfirmed)
                     .accessibilityHint("Removes the listed items. This cannot be undone for Trash contents.")
             }
             .padding(Design.spacingL)
@@ -124,13 +125,13 @@ struct ConfirmCleanSheet: View {
     }
 
     private func confirm() {
-        let selected = viewModel.selectedItems
+        let selected = selection.selectedItems
         onConfirm(CleaningRequest(
             items: selected,
             confirmed: Set(selected.map(\.id)),
             destructiveConfirmed: destructiveConfirmed,
-            selectedBytes: viewModel.selectedBytes,
-            scanResultID: viewModel.result.id
+            selectedBytes: selection.selectedBytes,
+            scanResultID: selection.sourceScanID
         ))
         dismiss()
     }

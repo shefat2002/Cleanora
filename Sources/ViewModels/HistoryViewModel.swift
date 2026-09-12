@@ -18,13 +18,30 @@ final class HistoryViewModel {
     private(set) var groups: [DayGroup] = []
 
     private let load: () -> [CleanupHistoryEntry]
+    /// Deleting history is a storage capability, injected; nil while the
+    /// store has no clear API, in which case the UI hides the button.
+    private let clear: (@MainActor () -> Void)?
 
-    init(load: @escaping () -> [CleanupHistoryEntry]) {
+    init(
+        load: @escaping () -> [CleanupHistoryEntry],
+        clear: (@MainActor () -> Void)? = nil
+    ) {
         self.load = load
+        self.clear = clear
     }
 
     convenience init(environment: AppEnvironment) {
         self.init(load: { environment.scanHistoryStore.history() })
+    }
+
+    var canClearHistory: Bool { clear != nil }
+
+    /// Deletes every history entry through the injected store call and
+    /// re-derives the day groups.
+    func clearHistory() {
+        guard let clear else { return }
+        clear()
+        refresh()
     }
 
     func refresh(

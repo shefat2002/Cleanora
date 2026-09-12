@@ -50,6 +50,12 @@ final class ResultsViewModel {
 
     private(set) var result: ScanResult
     private(set) var sections: [Section]
+    /// Items dropped by the cancelled-run reconciliation, if it ran; the
+    /// screen banners the count.
+    private(set) var droppedInCancelledRunCount = 0
+    /// Modification dates for large-file rows, probed once at init (at most
+    /// `largeFileLimit` stats) so rows never touch the filesystem in body.
+    private(set) var largeFileModifiedDates: [UUID: Date] = [:]
 
     var foundBytes: Int64 { result.items.reduce(0) { $0 + $1.size } }
     var reviewBytes: Int64 {
@@ -63,12 +69,14 @@ final class ResultsViewModel {
     /// Any selected item that cannot be undone: Trash contents or anything
     /// flagged destructive by its producer.
     var requiresDestructiveConfirmation: Bool {
-        result.selectedItems.contains {
-            $0.category == .trash || $0.confirmationLevel == .destructive
-        }
+        result.selectedItems.contains(where: CleaningFlowPolicy.isDestructive)
     }
+    var sourceScanID: UUID { result.id }
 
-    init(result: ScanResult) {
+    init(
+        result: ScanResult,
+        modificationDate: @escaping (URL) -> Date? = ResultsViewModel.defaultModificationDate
+    ) {
         // Engine-side selection defaults are re-applied at the UI boundary
         // so a misbehaving producer can never pre-select review items
         // (`.review` is never preselected, invariant from the spec).
@@ -82,6 +90,24 @@ final class ResultsViewModel {
         )
         self.result = normalized
         self.sections = Self.buildSections(for: normalized)
+        var dates: [UUID: Date] = [:]
+        for item in normalized.items where item.category == .largeFiles {
+            dates[item.id] = modificationDate(item.path)
+        }
+        largeFileModifiedDates = dates
+    }
+
+    /// Cancelled-cleanup entry point (backlog fix): a cleanup that was
+    /// stopped partway may already have removed some items, so the review is
+    /// re-derived from the stored result minus anything whose file is gone,
+    /// and the screen can banner how many were dropped. The existence check
+    /// is one stat per item — bounded by a single scan's item count.
+    convenience init(reconciling result: ScanResult) {
+        let outcome = Self.reconciling(result) { url in
+            FileManager.default.fileExists(atPath: url.path)
+        }
+        self.init(result: outcome.result)
+        droppedInCancelledRunCount = outcome.droppedCount
     }
 
     // MARK: - Selection mutations
@@ -129,6 +155,68 @@ final class ResultsViewModel {
     // MARK: - Pure builders
 
     nonisolated static let otherGroupName = "Other"
+
+    struct Reconciliation: Equatable {
+        let result: ScanResult
+        let droppedCount: Int
+    }
+
+    /// Drops items whose file is gone (already removed by the cancelled run)
+    /// and counts them. `fileExists` is injected so this stays pure; the
+    /// identity pass (nothing dropped) returns the result untouched.
+    nonisolated static func reconciling(
+        _ result: ScanResult,
+        fileExists: (URL) -> Bool
+    ) -> Reconciliation {
+        var kept: [CleanupItem] = []
+        kept.reserveCapacity(result.items.count)
+        var dropped = 0
+        for item in result.items {
+            if fileExists(item.path) {
+                kept.append(item)
+            } else {
+                dropped += 1
+            }
+        }
+        guard dropped > 0 else { return Reconciliation(result: result, droppedCount: 0) }
+        return Reconciliation(
+            result: ScanResult(
+                id: result.id,
+                startedAt: result.startedAt,
+                finishedAt: result.finishedAt,
+                items: kept,
+                summaries: result.summaries,
+                freeSpaceBefore: result.freeSpaceBefore,
+                scannerKeys: result.scannerKeys
+            ),
+            droppedCount: dropped
+        )
+    }
+
+    /// Banner copy for the reconciled review; nil when nothing was missing.
+    nonisolated static func cancelledRunBanner(droppedCount: Int) -> String? {
+        switch droppedCount {
+        case 0: return nil
+        case 1: return "1 item was already cleaned in the cancelled run."
+        default: return "\(droppedCount) items were already cleaned in the cancelled run."
+        }
+    }
+
+    nonisolated static func defaultModificationDate(for url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    /// "Modified Sep 1, 2026" for large-file rows; nil when the date is
+    /// unknown so the column disappears instead of lying.
+    nonisolated static func largeFileModifiedLine(
+        for date: Date?,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String? {
+        guard let date else { return nil }
+        return "Modified " + DateFormatting.mediumDate(date, locale: locale, timeZone: timeZone)
+    }
+
 
     /// Sorted stable for display: safe before review, then size descending,
     /// then name. Sorting copies values, so the user's selection travels
@@ -223,3 +311,5 @@ final class ResultsViewModel {
         items.reduce(0) { $0 + $1.size }
     }
 }
+
+extension ResultsViewModel: CleaningSelectionProviding {}
