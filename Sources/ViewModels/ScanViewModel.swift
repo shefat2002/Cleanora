@@ -52,7 +52,9 @@ final class ScanViewModel {
         let options = environment.preferences.value.scanOptions
         let coordinator = environment.scanCoordinator(options: options)
         self.init(
-            keys: coordinator.scanners.map(\.progressKey),
+            // Fan-out scanners (the developer composite) expand into their
+            // per-tool rows here, so progress matches what will actually run.
+            keys: coordinator.allProgressKeys(),
             makeStream: { coordinator.run() },
             onFinish: { result in
                 // P-13: the app layer decides between the plain Results route

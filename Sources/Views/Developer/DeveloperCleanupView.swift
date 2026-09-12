@@ -130,16 +130,18 @@ struct DeveloperCleanupView: View {
     ) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: Design.spacingM) {
-                TriStateCheckButton(
-                    state: group.selection,
-                    label: "Select all \(group.name)",
-                    action: {
-                        viewModel.setGroupSelection(
-                            group,
-                            isSelected: ResultsViewModel.targetSelection(for: group.selection)
-                        )
-                    }
-                )
+                if group.hasSelectableRows {
+                    TriStateCheckButton(
+                        state: group.selection,
+                        label: "Select all \(group.name)",
+                        action: {
+                            viewModel.setGroupSelection(
+                                group,
+                                isSelected: ResultsViewModel.targetSelection(for: group.selection)
+                            )
+                        }
+                    )
+                }
                 Text(group.name)
                     .font(.headline)
                 Spacer(minLength: Design.spacingS)
@@ -181,24 +183,37 @@ struct DeveloperCleanupView: View {
     ) -> some View {
         let item = row.item
         return HStack(spacing: Design.spacingM) {
-            Toggle(isOn: Binding(
-                get: { item.selected },
-                set: { viewModel.setSelection($0, itemID: item.id) }
-            )) {
-                EmptyView()
+            if row.isSelectable {
+                Toggle(isOn: Binding(
+                    get: { item.selected },
+                    set: { viewModel.setSelection($0, itemID: item.id) }
+                )) {
+                    EmptyView()
+                }
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .accessibilityLabel("\(item.selected ? "Deselect" : "Select") \(item.name)")
+                .accessibilityHint(item.riskLevel == .safe
+                    ? "Safe to remove, but rebuilds may take longer afterwards."
+                    : "Review item — off until you select it.")
             }
-            .toggleStyle(.checkbox)
-            .labelsHidden()
-            .accessibilityLabel("\(item.selected ? "Deselect" : "Select") \(item.name)")
-            .accessibilityHint(item.riskLevel == .safe
-                ? "Safe to remove, but rebuilds may take longer afterwards."
-                : "Review item — off until you select it.")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(.body)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: Design.spacingS) {
+                    Text(item.name)
+                        .font(.body)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if !row.isSelectable {
+                        Text("Informational")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.quaternary, in: Capsule())
+                            .accessibilityLabel("Informational, not selectable")
+                    }
+                }
                 if row.isReasonProminent {
                     // Docker rows explain instead of pointing at a path:
                     // the prune note is the primary content.
@@ -208,7 +223,8 @@ struct DeveloperCleanupView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .help(item.path.path)
+            // Gate-rejected rows render from the reason only — never a path.
+            .help(row.isSelectable ? item.path.path : item.reason)
 
             RiskBadge(level: item.riskLevel)
 
@@ -231,6 +247,9 @@ struct DeveloperCleanupView: View {
                 .frame(minWidth: 64, alignment: .trailing)
         }
         .accessibilityElement(children: .contain)
+        .accessibilityValue(row.isSelectable
+            ? (item.selected ? "Selected" : "Not selected")
+            : "Informational")
     }
 
     /// Same gate as Results: the confirmation sheet is skipped only when both

@@ -191,6 +191,37 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         XCTAssertNotNil(env.takePendingCleaning())
     }
 
+    // MARK: Fan-out progress rows (engine-a2 wiring)
+
+    func testScanViewModelExpandsDeveloperFanOutProgressRows() {
+        let env = makeEnvironment()
+        env.preferences.update { $0.includeDeveloperData = true }
+        let viewModel = ScanViewModel(environment: env)
+        let labels = viewModel.keys.map(\.label)
+
+        XCTAssertTrue(
+            labels.contains { $0.contains("Xcode") },
+            "fan-out scanners must expand into per-tool rows, got \(labels)"
+        )
+        XCTAssertGreaterThan(viewModel.keys.count, 6)
+    }
+
+    func testScanViewModelCollapsesFanOutRowsWhenDeveloperModeOff() {
+        let env = makeEnvironment()
+        XCTAssertFalse(env.preferences.value.includeDeveloperData)
+        let viewModel = ScanViewModel(environment: env)
+        let labels = Set(viewModel.keys.map(\.label))
+
+        XCTAssertFalse(
+            labels.contains { $0.contains("Xcode") },
+            "gated-off fan-out stays collapsed"
+        )
+        XCTAssertEqual(labels, [
+            "Application Caches", "Browser Caches", "Temporary Files",
+            "Old Logs", "Trash", "Large Files",
+        ])
+    }
+
     // MARK: P-13 options resolution (developer gate → scanner set)
 
     func testResolvedOptionsMirrorDeveloperGateIntoCategories() {

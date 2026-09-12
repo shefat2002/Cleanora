@@ -181,6 +181,56 @@ final class DeveloperCleanupViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.requiresDestructiveConfirmation)
     }
 
+    // MARK: Docker informational marker (permanent Containers invariant)
+
+    private var containerMarkerPath: String {
+        "/Users/dev/Library/Containers/com.docker.docker/Data"
+    }
+
+    func testContainersMarkerRowIsNotSelectable() {
+        let marker = developerItem(
+            name: "Docker build cache", size: 900, appName: "Docker", path: containerMarkerPath
+        )
+        let viewModel = DeveloperCleanupViewModel(result: result([marker]))
+        let group = viewModel.groups[0]
+
+        XCTAssertFalse(group.rows[0].isSelectable, "the marker is gate-rejected — no checkbox")
+        XCTAssertFalse(group.hasSelectableRows)
+
+        viewModel.setSelection(true, itemID: marker.id)
+        XCTAssertEqual(viewModel.selectedItems, [], "even a direct attempt selects nothing")
+        XCTAssertEqual(viewModel.selectedBytes, 0)
+        XCTAssertFalse(viewModel.canClean)
+        XCTAssertEqual(group.bytes, 900, "informational size still counts as found")
+    }
+
+    func testGroupSelectionSkipsInformationalRows() {
+        let cache = developerItem(
+            name: "Docker build cache", size: 100, appName: "Docker",
+            path: "/Users/dev/Library/Containers-free/docker-cache"
+        )
+        let marker = developerItem(
+            name: "Docker build cache", size: 900, appName: "Docker", path: containerMarkerPath
+        )
+        let viewModel = DeveloperCleanupViewModel(result: result([marker, cache]))
+        // Groups are value snapshots re-derived after every mutation — the
+        // group is re-fetched from the view model after each change.
+        let initialGroup = viewModel.groups.first { $0.name == "Docker" }!
+
+        XCTAssertTrue(initialGroup.hasSelectableRows)
+        XCTAssertEqual(initialGroup.selectableItems.map(\.size), [100], "only the allowlisted cache row is selectable")
+
+        viewModel.setGroupSelection(initialGroup, isSelected: true)
+        let updatedGroup = viewModel.groups.first { $0.name == "Docker" }!
+
+        XCTAssertEqual(viewModel.selectedItems.map(\.size), [100], "group select-all skips the marker")
+        XCTAssertEqual(updatedGroup.selection, .all, "tri-state reads only selectable rows")
+        XCTAssertEqual(viewModel.selectedBytes, 100)
+        let markerRow = updatedGroup.rows.first { !$0.isSelectable }
+        XCTAssertNotNil(markerRow)
+        XCTAssertFalse(markerRow?.item.selected ?? true, "the marker row stays unselected")
+    }
+
     // MARK: Empty state
 
     func testEmptyWhenScanHasNoDeveloperItems() {

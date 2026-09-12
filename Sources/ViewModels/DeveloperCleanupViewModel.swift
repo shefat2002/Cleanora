@@ -18,6 +18,9 @@ final class DeveloperCleanupViewModel {
         /// True for Docker-family rows: the reason line renders prominently
         /// under the name instead of hiding behind the info button.
         let isReasonProminent: Bool
+        /// False for gate-rejected informational rows (Docker's marker): no
+        /// checkbox, never selectable, rendered from the reason only.
+        let isSelectable: Bool
         var id: UUID { item.id }
     }
 
@@ -25,12 +28,20 @@ final class DeveloperCleanupViewModel {
         let name: String
         let rows: [Row]
         var id: String { name }
+        /// Group total counts everything found — informational rows report
+        /// real sizes, they just can't be selected.
         var bytes: Int64 { rows.reduce(0) { $0 + $1.item.size } }
         var selectedBytes: Int64 {
             rows.filter(\.item.selected).reduce(0) { $0 + $1.item.size }
         }
+        /// Tri-state reads only what CAN be selected, so an informational
+        /// row never makes a fully-selected group look mixed.
+        var selectableItems: [CleanupItem] {
+            rows.filter(\.isSelectable).map(\.item)
+        }
+        var hasSelectableRows: Bool { !selectableItems.isEmpty }
         var selection: TriStateSelection {
-            ResultsViewModel.selectionState(of: rows.map(\.item))
+            ResultsViewModel.selectionState(of: selectableItems)
         }
     }
 
@@ -83,6 +94,9 @@ final class DeveloperCleanupViewModel {
     func setSelection(_ isSelected: Bool, itemIDs: Set<UUID>) {
         mutateItems { items in
             for index in items.indices where itemIDs.contains(items[index].id) {
+                // Informational rows are never selectable — mirrors the
+                // engine gate that would reject them anyway.
+                guard Self.isSelectable(items[index]) else { continue }
                 items[index].selected = isSelected
             }
         }
@@ -146,6 +160,14 @@ final class DeveloperCleanupViewModel {
         toolName(for: item) == dockerGroupName
     }
 
+    /// Permanent engine invariant: ~/Library/Containers/** is never in the
+    /// deletion allowlist, so anything under it — Docker's informational
+    /// marker — is not offered for selection. The row renders as review
+    /// information (the prune note), never as a deletable path.
+    nonisolated static func isSelectable(_ item: CleanupItem) -> Bool {
+        !item.path.standardizedFileURL.path.contains("/Library/Containers/")
+    }
+
     nonisolated static func buildGroups(for result: ScanResult) -> [ToolGroup] {
         let byTool = Dictionary(grouping: result.items) { toolName(for: $0) }
         return byTool
@@ -155,7 +177,13 @@ final class DeveloperCleanupViewModel {
                         if $0.size != $1.size { return $0.size > $1.size }
                         return $0.name < $1.name
                     }
-                    .map { Row(item: $0, isReasonProminent: isReasonProminent(for: $0)) }
+                    .map {
+                        Row(
+                            item: $0,
+                            isReasonProminent: isReasonProminent(for: $0),
+                            isSelectable: isSelectable($0)
+                        )
+                    }
                 return ToolGroup(name: name, rows: rows)
             }
             .sorted {
