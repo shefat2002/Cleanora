@@ -11,6 +11,7 @@ final class SafetyPolicyTests: TempHomeTestCase {
 
     private func makeItem(
         path: URL,
+        category: ScanCategory = .applicationCaches,
         risk: RiskLevel = .safe,
         selected: Bool = true,
         confirmation: CleanupItem.ConfirmationLevel = .standard,
@@ -18,7 +19,7 @@ final class SafetyPolicyTests: TempHomeTestCase {
     ) -> CleanupItem {
         CleanupItem(
             name: "Test Item",
-            category: .applicationCaches,
+            category: category,
             path: path,
             size: 10,
             riskLevel: risk,
@@ -87,17 +88,75 @@ final class SafetyPolicyTests: TempHomeTestCase {
         }
     }
 
-    // I10
-    func testOwnLogsExcluded() {
+    // I6 positive case: destructive + explicit flag passes the gate.
+    func testDestructivePassesWithExplicitConfirm() throws {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent(".Trash"),
+            confirmation: .destructive,
+            deletionMethod: .removeContents
+        )
+        XCTAssertNoThrow(
+            try policy.validate(item, confirmed: [item.id], destructiveConfirmed: true)
+        )
+    }
+
+    // The gate never trusts the producer: a Trash-category item carrying the
+    // default `.standard` confirmation is rejected even with batch consent.
+    func testTrashCategoryWithoutDestructiveMarkingRejected() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent(".Trash/some-file"),
+            category: .trash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            guard case SafetyPolicy.Violation.destructiveWithoutExplicitConfirm = error else {
+                return XCTFail("expected destructiveWithoutExplicitConfirm, got \(error)")
+            }
+        }
+    }
+
+    // Permanent removal is legal only for `.safe` data.
+    func testRemoveContentsOnReviewRiskRejected() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Developer/Xcode/Archives/old.xcarchive"),
+            risk: .review,
+            deletionMethod: .removeContents
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testRemoveContentsOnSafeRiskAccepted() throws {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Caches/com.example.app"),
+            risk: .safe,
+            deletionMethod: .removeContents
+        )
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    // Relative paths resolve against a mutable CWD — always rejected.
+    func testRelativePathRejected() {
+        let item = makeItem(path: URL(fileURLWithPath: "relative/dir"))
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(
+                error as? SafetyPolicy.Violation,
+                .outsideAllowedRoots("relative/dir")
+            )
+        }
+    }
+
+    // I10 — assert the specific violation, not just "throws".
+    func testOwnLogsExcluded() throws {
         let logURL = AppDirectories(home: tempHome).logsDirectory
             .appendingPathComponent("cleanup-2026-09-12.jsonl")
-        try? FileManager.default.createDirectory(
+        try FileManager.default.createDirectory(
             at: AppDirectories(home: tempHome).logsDirectory,
             withIntermediateDirectories: true
         )
-        try? Data("{}".utf8).write(to: logURL)
+        try Data("{}".utf8).write(to: logURL)
         let item = makeItem(path: logURL)
-        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(error as? SafetyPolicy.Violation, .blockedPath(policy.canonicalized(logURL).path))
+        }
     }
 
     // Canonicalization: /tmp vs /private/tmp must resolve to the same path.

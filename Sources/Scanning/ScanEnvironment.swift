@@ -16,9 +16,19 @@ public struct ScanEnvironment: Sendable {
 
     /// Supports the CLEANORA_FIXTURE_HOME QA seam: points the whole engine
     /// at a fixture tree so dangerous flows are exercised without real data.
+    /// Refuses non-existent or root-level homes so the seam can't silently
+    /// re-aim the allowlist at real system paths.
     public static func live() -> ScanEnvironment {
         if let fixtureHome = ProcessInfo.processInfo.environment["CLEANORA_FIXTURE_HOME"] {
             let home = URL(fileURLWithPath: fixtureHome, isDirectory: true)
+            let fm = FileManager.default
+            let exists = (try? fm.attributesOfItem(atPath: home.path)) != nil
+            let isBareRoot = home.path == "/" || home.standardizedFileURL.pathComponents.count <= 1
+            guard exists, !isBareRoot else {
+                fatalError(
+                    "CLEANORA_FIXTURE_HOME must point to an existing fixture directory, got: \(fixtureHome)"
+                )
+            }
             return ScanEnvironment(home: home, temporaryRoot: home.appendingPathComponent("tmp"))
         }
         return ScanEnvironment(

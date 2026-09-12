@@ -27,7 +27,8 @@ targets:
         INFOPLIST_FILE: Config/Info.plist
         CODE_SIGN_ENTITLEMENTS: Config/Cleanora.entitlements
         CODE_SIGN_STYLE: Automatic
-        ENABLE_HARDENED_RUNTIME: NO
+        # Required for notarization; also enables library validation.
+        ENABLE_HARDENED_RUNTIME: YES
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: 0.1.0
   CleanoraTests:

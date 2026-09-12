@@ -16,15 +16,19 @@ public struct SafetyPolicy: Sendable {
 
     /// Canonicalized at init.
     private let allowedRoots: [String]
+    /// Subtrees forbidden even if an allowed root contains them.
+    private let excludedRoots: [String]
     private let blockedPaths: [String]
     private let blockedPathFragments: [String]
 
     public init(
         allowedRoots: [URL],
         blockedPaths: [URL],
-        blockedPathFragments: [String]
+        blockedPathFragments: [String],
+        excludedRoots: [URL] = []
     ) {
         self.allowedRoots = allowedRoots.map { Self.canonicalized($0).path }
+        self.excludedRoots = excludedRoots.map { Self.canonicalized($0).path }
         self.blockedPaths = blockedPaths.map { Self.canonicalized($0).path }
         self.blockedPathFragments = blockedPathFragments
     }
@@ -69,7 +73,10 @@ public struct SafetyPolicy: Sendable {
             blockedPathFragments: [
                 "Mobile Documents", "Keychains", "MobileSync",
                 "iCloud Drive", "com.apple.LaunchServices",
-            ]
+            ],
+            // I10: even if some future allowed root overlaps Cleanora's own
+            // Application Support subtree, it stays forbidden.
+            excludedRoots: [appDirs.applicationSupport]
         )
     }
 
@@ -97,7 +104,9 @@ public struct SafetyPolicy: Sendable {
             probe = probe.deletingLastPathComponent()
         }
         if realpath(probe.path, &buffer) != nil {
-            let real = String(cString: buffer)
+            let real = String(cString: buffer).hasSuffix("/")
+                ? String(String(cString: buffer).dropLast())
+                : String(cString: buffer)
             return URL(fileURLWithPath: suffix.isEmpty ? real : real + "/" + suffix.joined(separator: "/"))
         }
         return URL(fileURLWithPath: standardized)
@@ -108,8 +117,20 @@ public struct SafetyPolicy: Sendable {
         confirmed: Set<UUID>,
         destructiveConfirmed: Bool = false
     ) throws {
+        // Relative paths resolve against a mutable CWD — never accept them.
+        // URL.path normalizes relative input to a leading slash, so use
+        // relativePath, which preserves the original form.
+        let rawPath = item.path.relativePath
+        guard rawPath.hasPrefix("/") else {
+            throw Violation.outsideAllowedRoots(rawPath)
+        }
         let path = canonicalized(item.path).path
 
+        // Excluded subtrees are forbidden unconditionally — check before the
+        // allowlist so a future allowlist overlap can never re-open them.
+        if excludedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+            throw Violation.blockedPath(path)
+        }
         guard allowedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else {
             throw Violation.outsideAllowedRoots(path)
         }
@@ -119,8 +140,15 @@ public struct SafetyPolicy: Sendable {
         if let fragment = blockedPathFragments.first(where: { path.contains($0) }) {
             throw Violation.blockedFragment(fragment)
         }
-        // Defense in depth: CleanupItem's init already forbids `.never` (I1).
+        // Defense in depth: CleanupItem's inits (memberwise + Codable) already
+        // forbid `.never` (I1).
         guard item.riskLevel != .never else {
+            throw Violation.neverRiskNotAllowed(path)
+        }
+        // Permanent deletion is legal only for auto-selected, regenerable
+        // data. Anything the user must review first gets the recoverable
+        // trash path.
+        if item.deletionMethod == .removeContents && item.riskLevel != .safe {
             throw Violation.neverRiskNotAllowed(path)
         }
         guard item.selected else {
@@ -130,7 +158,12 @@ public struct SafetyPolicy: Sendable {
             throw Violation.missingConfirmation(path)
         }
         // I6: Trash emptying needs its own explicit user gesture, not the
-        // batch confirmation.
+        // batch confirmation. A Trash-category item that skipped the
+        // `.destructive` marking is rejected outright — the gate never
+        // trusts the producer's default.
+        if item.category == .trash && item.confirmationLevel != .destructive {
+            throw Violation.destructiveWithoutExplicitConfirm(path)
+        }
         if item.confirmationLevel == .destructive && !destructiveConfirmed {
             throw Violation.destructiveWithoutExplicitConfirm(path)
         }

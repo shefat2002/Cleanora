@@ -21,11 +21,25 @@ final class CleanupItemTests: XCTestCase {
 
     // I1: a `.never` item must be impossible to construct.
     func testNeverRiskRejectedAtConstruction() {
-        // precondition crashes rather than throws; run it in a subprocess-free way
-        // by asserting the guard exists at the type level.
-        // We test the observable contract: `.never` is excluded from preselection
-        // and SafetyPolicy independently rejects it.
+        // The memberwise init guards with precondition (crash, not throw —
+        // by design, it's a programmer error). The Codable path throws, and
+        // testDecodingNeverRiskThrows proves it.
         XCTAssertFalse(RiskLevel.never.isPreselected)
+    }
+
+    func testDecodingNeverRiskThrows() throws {
+        XCTAssertThrowsError(try JSONDecoder().decode(CleanupItem.self, from: neverItemJSON())) { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("expected dataCorrupted, got \(error)")
+            }
+        }
+    }
+
+    private func neverItemJSON() throws -> Data {
+        let item = makeItem()
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as? [String: Any])
+        json["riskLevel"] = "never"
+        return try JSONSerialization.data(withJSONObject: json)
     }
 
     func testSafeDefaultsToSelected() {

@@ -60,6 +60,13 @@ final class PreferencesStore {
 
     private static func load(from defaults: UserDefaults) -> Preferences? {
         guard let data = defaults.data(forKey: Self.key) else { return nil }
-        return try? JSONDecoder().decode(Preferences.self, from: data)
+        do {
+            return try JSONDecoder().decode(Preferences.self, from: data)
+        } catch {
+            // Corrupt or incompatible blob: drop it so the next persist
+            // writes fresh defaults instead of keeping a dead value around.
+            defaults.removeObject(forKey: Self.key)
+            return nil
+        }
     }
 }

@@ -91,6 +91,14 @@ public struct CleanupItem: Identifiable, Hashable, Codable, Sendable {
         size = try container.decode(Int64.self, forKey: .size)
         fileCount = try container.decodeIfPresent(Int.self, forKey: .fileCount)
         riskLevel = try container.decode(RiskLevel.self, forKey: .riskLevel)
+        // I1 on the Codable path too: a crafted/persisted `.never` must not
+        // round-trip into display or selection state.
+        guard riskLevel != .never else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .riskLevel, in: container,
+                debugDescription: "CleanupItem must never be created with riskLevel .never"
+            )
+        }
         selected = try container.decodeIfPresent(Bool.self, forKey: .selected)
             ?? riskLevel.isPreselected
         reason = try container.decode(String.self, forKey: .reason)
