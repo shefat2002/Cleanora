@@ -1,0 +1,135 @@
+import Foundation
+import Observation
+
+/// Dashboard state: health headline, safe-to-clean total, last-scan line and
+/// per-category sizes. All decision logic is pure and static; the instance
+/// only caches what `refresh()` loaded from the injected providers.
+@MainActor
+@Observable
+final class DashboardViewModel {
+    struct CategoryRow: Identifiable, Equatable {
+        let category: ScanCategory
+        let bytes: Int64
+        var id: String { category.rawValue }
+    }
+
+    private(set) var lastScan: ScanResult?
+    private(set) var diskOverview: DiskOverview?
+    private(set) var hasFullDiskAccess = true
+    private(set) var didLoad = false
+
+    var hasScan: Bool { lastScan != nil }
+    var safeToCleanBytes: Int64 { Self.safeToCleanBytes(for: lastScan) }
+    var headline: String {
+        Self.healthHeadline(for: safeToCleanBytes, hasScan: hasScan)
+    }
+    var freeSpaceLine: String? { Self.freeSpaceLine(for: diskOverview) }
+    var categoryRows: [CategoryRow] { Self.categoryRows(for: lastScan) }
+
+    private let loadLastScan: @MainActor () -> ScanResult?
+    private let loadDiskOverview: @MainActor () -> DiskOverview?
+    private let permissionCheck: @MainActor () -> Bool
+
+    init(
+        loadLastScan: @escaping @MainActor () -> ScanResult?,
+        loadDiskOverview: @escaping @MainActor () -> DiskOverview?,
+        permissionCheck: @escaping @MainActor () -> Bool
+    ) {
+        self.loadLastScan = loadLastScan
+        self.loadDiskOverview = loadDiskOverview
+        self.permissionCheck = permissionCheck
+    }
+
+    convenience init(environment: AppEnvironment) {
+        self.init(
+            loadLastScan: { environment.lastScanResult ?? environment.scanHistoryStore.lastScan() },
+            loadDiskOverview: { DiskInfoProvider().overview() },
+            permissionCheck: { environment.hasFullDiskAccess() }
+        )
+    }
+
+    func refresh(
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) {
+        if let stored = loadLastScan() {
+            // Keep whichever scan is newer — a fresh in-memory scan beats a
+            // reloaded store entry from launch.
+            if lastScan == nil || stored.finishedAt > (lastScan?.finishedAt ?? .distantPast) {
+                lastScan = stored
+            }
+        }
+        diskOverview = loadDiskOverview()
+        hasFullDiskAccess = permissionCheck()
+        didLoad = true
+        lastRefreshedAt = now
+        lastScanLine = Self.lastScanLine(
+            for: lastScan?.finishedAt,
+            now: now,
+            calendar: calendar,
+            locale: locale,
+            timeZone: timeZone
+        )
+    }
+
+    /// Formatted during refresh (with the refresh-time clock) rather than in
+    /// body, so the line is stable while the view is visible.
+    private(set) var lastScanLine: String?
+    private var lastRefreshedAt: Date?
+
+    // MARK: - Pure logic
+
+    /// Preselected bytes = everything marked `.safe`. A misbehaving result
+    /// with empty summaries still yields a number because this reads items.
+    static func safeToCleanBytes(for result: ScanResult?) -> Int64 {
+        guard let result else { return 0 }
+        return result.items
+            .filter { $0.riskLevel == .safe }
+            .reduce(0) { $0 + $1.size }
+    }
+
+    static func categoryRows(for result: ScanResult?) -> [CategoryRow] {
+        guard let result else { return [] }
+        return ScanCategory.scanOrder.compactMap { category in
+            let bytes = result.items(in: category).reduce(Int64(0)) { $0 + $1.size }
+            guard bytes > 0 else { return nil }
+            return CategoryRow(category: category, bytes: bytes)
+        }
+    }
+
+    /// Health copy. Measured, never alarming: the worst phrase is "needs
+    /// attention", and thresholds are absolute gigabyte steps.
+    static func healthHeadline(for safeBytes: Int64, hasScan: Bool) -> String {
+        guard hasScan else { return "Ready" }
+        let fiveGB: Int64 = 5_000_000_000
+        let twentyFiveGB: Int64 = 25_000_000_000
+        if safeBytes < fiveGB { return "Healthy" }
+        if safeBytes < twentyFiveGB { return "Could be cleaner" }
+        return "Needs attention"
+    }
+
+    static func freeSpaceLine(for overview: DiskOverview?) -> String? {
+        guard let overview else { return nil }
+        return "\(overview.availableForImportantUsage.formattedByteCount) available"
+    }
+
+    /// "Last scan: Today, 10:42 AM" — nil until a scan exists.
+    static func lastScanLine(
+        for date: Date?,
+        now: Date,
+        calendar: Calendar,
+        locale: Locale,
+        timeZone: TimeZone
+    ) -> String? {
+        guard let date else { return nil }
+        return "Last scan: " + DateFormatting.timestampLine(
+            for: date,
+            now: now,
+            calendar: calendar,
+            locale: locale,
+            timeZone: timeZone
+        )
+    }
+}
