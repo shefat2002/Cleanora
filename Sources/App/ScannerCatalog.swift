@@ -22,13 +22,19 @@ enum ScannerCatalog {
     #if DEBUG
     /// Fixture QA seam (I-02): the real scanners against CLEANORA_FIXTURE_HOME
     /// — ScanEnvironment.live() re-roots everything, so QA exercises the
-    /// genuine engine. TempScanner's second root is kept inside the fixture
-    /// home so fixture runs never read the real /private/tmp.
+    /// genuine engine. TempScanner's second root is a distinct path inside
+    /// the fixture home: still sealed off the real /private/tmp, and without
+    /// the same-URL-twice overlap that would double-count progress numbers
+    /// (the coordinator dedupes final items, but live bytesScanned would
+    /// still double).
     private static func fixtureScanners(in environment: ScanEnvironment) -> [any Scanner] {
         [
             ApplicationCacheScanner(),
             BrowserCacheScanner(),
-            TempScanner(sharedTempRoot: environment.temporaryRoot),
+            TempScanner(
+                sharedTempRoot: environment.temporaryRoot
+                    .appendingPathComponent("shared", isDirectory: true)
+            ),
             LogScanner(),
             TrashScanner(),
         ]
