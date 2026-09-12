@@ -4,6 +4,37 @@ Transparent native macOS cleaner — Scan → Review → Clean → Verify. Swift
 engine (`Models`/`Scanning`/`Cleaning`/`Storage`/`Support`), Swift 6 strict concurrency, XcodeGen,
 XCTest.
 
+## Building
+
+```bash
+brew install xcodegen   # once
+make verify             # generate + build + test
+make run                # build + launch the app
+```
+
+## Distribution (Developer ID + notarization)
+
+The app is **deliberately non-sandboxed** (`Config/Cleanora.entitlements` has no sandbox key) —
+a sandboxed app can only read its own container, which would make scanning other apps' caches
+impossible. App Store distribution is therefore out of scope; ship via Developer ID.
+
+One-time setup:
+
+```bash
+security find-identity -v -p codesigning        # confirm a Developer ID Application cert
+xcrun notarytool store-credentials <PROFILE>   # store App Store Connect API or Apple ID creds
+```
+
+Package (archive → codesign hardened → notarize → staple → Gatekeeper check):
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+NOTARY_PROFILE=<PROFILE> \
+./scripts/package.sh
+```
+
+Hardened runtime is ON in all configurations (`project.yml`); notarization requires it.
+
 ## QA
 
 ### Environment
