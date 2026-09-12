@@ -178,4 +178,39 @@ final class SafetyPolicyTests: TempHomeTestCase {
         XCTAssertFalse(url.path.hasPrefix("/tmp/"))
         XCTAssertTrue(url.path == "/private/tmp" || url.path.hasPrefix("/private/tmp"))
     }
+
+    // Gap: an allowed-root path whose symlink resolves OUT of the allowlist
+    // must be judged by its target (canonicalization runs before checks).
+    // NOTE: this holds only when the target EXISTS — a dangling symlink
+    // canonicalizes to the link path itself and passes the gate (reported
+    // to the lead as a SafetyPolicy gap; not fixable here, policy is frozen).
+    func testSymlinkEscapingAllowlistRejected() throws {
+        let fm = FileManager.default
+        let documents = tempHome.appendingPathComponent("Documents")
+        try fm.createDirectory(at: documents, withIntermediateDirectories: true)
+        try Data("secret".utf8).write(to: documents.appendingPathComponent("secret.txt"))
+        try fm.createDirectory(
+            at: tempHome.appendingPathComponent("Library/Caches"), withIntermediateDirectories: true
+        )
+        let escape = tempHome.appendingPathComponent("Library/Caches/escape")
+        try fm.createSymbolicLink(
+            at: escape,
+            withDestinationURL: documents.appendingPathComponent("secret.txt")
+        )
+        let item = makeItem(path: escape)
+        let expected = policy.canonicalized(escape).path
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(error as? SafetyPolicy.Violation, .outsideAllowedRoots(expected))
+        }
+    }
+
+    // Gap: `..` must not survive canonicalization — a traversal into
+    // Preferences lands outside the allowlist and is rejected.
+    func testDotDotTraversalIntoBlockedRootRejected() {
+        let item = makeItem(path: tempHome.appendingPathComponent("Library/Caches/../Preferences/notes.txt"))
+        let expected = policy.canonicalized(item.path).path
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(error as? SafetyPolicy.Violation, .outsideAllowedRoots(expected))
+        }
+    }
 }
