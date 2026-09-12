@@ -4,34 +4,34 @@ import Observation
 
 /// What the UI needs to know about filesystem permissions, injected so the
 /// dashboard and permission banner never talk to TCC directly. The default
-/// probe is a lightweight listing canary; PermissionManager (Cleaning layer)
-/// can replace it at integration time without touching a single view.
+/// implementation delegates to PermissionManager (Cleaning layer, K-05) —
+/// this seam exists so views never import engine types and tests can inject
+/// stubs. The AppKit deep link lives here because the Cleaning layer is
+/// UI-free by layering rule.
 struct PermissionProbe: Sendable {
     var hasFullDiskAccess: @Sendable () -> Bool
     var openFullDiskAccessSettings: @MainActor @Sendable () -> Void
 
     static func live(environment: ScanEnvironment) -> PermissionProbe {
-        PermissionProbe(
-            hasFullDiskAccess: {
-                // Canary: locations macOS gates behind Full Disk Access.
-                // A readable listing means access; if neither canary exists
-                // (fixture homes) we assume access since there is no gate.
-                let fileManager = FileManager.default
-                let candidates = [
-                    environment.home.appendingPathComponent(
-                        "Library/Application Support/MobileSync/Backup", isDirectory: true),
-                    environment.home.appendingPathComponent("Library/Safari", isDirectory: true),
-                ]
-                for candidate in candidates where fileManager.fileExists(atPath: candidate.path) {
-                    return (try? fileManager.contentsOfDirectory(atPath: candidate.path)) != nil
+        let manager = PermissionManager(
+            home: environment.home,
+            openSettings: {
+                if let url = PermissionManager.fullDiskAccessSettingsURL {
+                    NSWorkspace.shared.open(url)
                 }
-                return true
+            }
+        )
+        return PermissionProbe(
+            hasFullDiskAccess: {
+                // Missing canaries (fixture homes) are not denials — only an
+                // actual TCC refusal raises the banner.
+                let status = manager.probe()
+                return ![
+                    status.caches, status.logs, status.trash, status.safari,
+                ].contains(.permissionDenied)
             },
             openFullDiskAccessSettings: {
-                guard let url = URL(string:
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-                ) else { return }
-                NSWorkspace.shared.open(url)
+                manager.openFullDiskAccessSettings()
             }
         )
     }

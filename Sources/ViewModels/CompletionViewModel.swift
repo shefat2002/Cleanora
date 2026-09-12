@@ -19,8 +19,38 @@ struct CompletionViewModel {
     var itemsRemoved: Int { report.itemsRemoved }
     var partiallyRemoved: Int { report.partiallyRemoved }
     var failureCount: Int { report.failureCount }
+    /// Free-space refusals and other protective skips arrive as `.skipped`
+    /// outcomes with a producer message — never a crash, never silent.
+    var skippedCount: Int {
+        report.outcomes.filter { $0.status == .skipped }.count
+    }
+    /// True when the batch was refused/validated out entirely: nothing was
+    /// touched, so the celebration must not run.
+    var removedNothing: Bool {
+        bytesFreed == 0 && itemsRemoved == 0 && partiallyRemoved == 0
+    }
     var headline: String { "Your Mac is cleaner" }
     var freedLine: String { "\(bytesFreed.formattedByteCount) freed" }
+
+    /// The first producer-supplied skip reason, or a calm fallback.
+    static func refusalMessage(from outcomes: [ItemOutcome]) -> String? {
+        guard outcomes.contains(where: { $0.status == .skipped }) else { return nil }
+        if let message = outcomes.first(where: { $0.status == .skipped })?.message,
+           !message.isEmpty {
+            return message
+        }
+        return "Some items were skipped and left untouched."
+    }
+
+    var refusalLine: String? { Self.refusalMessage(from: report.outcomes) }
+
+    var nothingRemovedTitle: String { "Nothing was removed" }
+
+    var nothingRemovedMessage: String {
+        refusalLine
+            ?? failureLine
+            ?? "Every item was left untouched — your files are exactly as they were."
+    }
 
     var categoryRows: [CategoryRow] {
         ScanCategory.scanOrder.compactMap { category in

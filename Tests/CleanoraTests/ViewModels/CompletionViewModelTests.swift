@@ -72,4 +72,71 @@ final class CompletionViewModelTests: XCTestCase {
         XCTAssertEqual(model.freedLine, "12.7 GB freed")
         XCTAssertEqual(model.headline, "Your Mac is cleaner")
     }
+
+    // MARK: Free-space refusal (skipped outcomes)
+
+    func testRefusalMessageSurfacesProducerSkipReason() {
+        let cache = item("cache", category: .applicationCaches, size: 1_000)
+        let refusal = VMFixtures.outcome(
+            for: cache,
+            status: .skipped,
+            bytesFreed: 0,
+            message: "Not enough free disk space to clean safely."
+        )
+        XCTAssertEqual(
+            CompletionViewModel.refusalMessage(from: [refusal]),
+            "Not enough free disk space to clean safely."
+        )
+        XCTAssertNil(CompletionViewModel.refusalMessage(from: []))
+    }
+
+    func testRefusalMessageFallsBackWhenProducerMessageEmpty() {
+        let cache = item("cache", category: .applicationCaches, size: 1_000)
+        let refusal = VMFixtures.outcome(for: cache, status: .skipped, bytesFreed: 0, message: nil)
+        XCTAssertEqual(
+            CompletionViewModel.refusalMessage(from: [refusal]),
+            "Some items were skipped and left untouched."
+        )
+    }
+
+    func testFullyRefusedBatchShowsNothingRemovedState() {
+        let cache = item("cache", category: .applicationCaches, size: 1_000)
+        let report = makeReport(
+            outcomes: [
+                VMFixtures.outcome(
+                    for: cache,
+                    status: .skipped,
+                    bytesFreed: 0,
+                    message: "Refusing to clean: available space is below the safety floor."
+                ),
+            ],
+            freeSpaceAfter: nil
+        )
+        let model = CompletionViewModel(report: report, freeSpaceAfter: report.freeSpaceAfter)
+
+        XCTAssertTrue(model.removedNothing, "all-skipped batch must not run the celebration")
+        XCTAssertEqual(model.skippedCount, 1)
+        XCTAssertEqual(
+            model.nothingRemovedMessage,
+            "Refusing to clean: available space is below the safety floor."
+        )
+        XCTAssertTrue(model.categoryRows.isEmpty, "0-byte categories stay hidden")
+    }
+
+    func testPartialSuccessIsStillACelebrationWithFootnote() {
+        let cache = item("cache", category: .applicationCaches, size: 1_000)
+        let log = item("log", category: .logs, size: 2_000)
+        let report = makeReport(
+            outcomes: [
+                VMFixtures.outcome(for: cache, status: .removed, bytesFreed: 900),
+                VMFixtures.outcome(for: log, status: .skipped, bytesFreed: 0, message: "in use"),
+            ],
+            freeSpaceAfter: nil
+        )
+        let model = CompletionViewModel(report: report, freeSpaceAfter: nil)
+
+        XCTAssertFalse(model.removedNothing)
+        XCTAssertEqual(model.refusalLine, "in use", "skips surface as a footnote, not a takeover")
+        XCTAssertEqual(model.bytesFreed, 900)
+    }
 }
