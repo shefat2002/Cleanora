@@ -125,7 +125,18 @@ public struct CleanupExecutor: Sendable {
             return
         }
 
-        for item in items {
+        // Trash empties FIRST: any recoverable item moved into ~/.Trash
+        // later in the same batch must not be destroyed by this run's
+        // trash-emptying (reviewer finding: recovery promise would be
+        // silently voided otherwise). Stable sort preserves the rest.
+        let orderedItems = items.enumerated().sorted { lhs, rhs in
+            let lhsTrash = lhs.element.category == .trash
+            let rhsTrash = rhs.element.category == .trash
+            if lhsTrash != rhsTrash { return lhsTrash }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+
+        for item in orderedItems {
             // I12: cancellation is checked between items, so everything
             // after the check stays untouched.
             if cancelled.withLock({ $0 }) || Task.isCancelled {

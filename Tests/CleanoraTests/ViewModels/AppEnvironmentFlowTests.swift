@@ -6,7 +6,11 @@ import XCTest
 @MainActor
 final class AppEnvironmentFlowTests: TempHomeTestCase {
     private func makeEnvironment() -> AppEnvironment {
-        AppEnvironment(
+        // Isolated defaults: the standard domain may carry state from real
+        // app runs and must never decide test outcomes.
+        let defaults = UserDefaults(suiteName: "AppEnvironmentFlowTests-\(UUID().uuidString)")!
+        return AppEnvironment(
+            preferences: PreferencesStore(defaults: defaults),
             scanEnvironment: environment,
             permissionProbe: PermissionProbe(
                 hasFullDiskAccess: { true },

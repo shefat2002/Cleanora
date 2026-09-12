@@ -107,6 +107,15 @@ final class CleanupExecutorTests: TempHomeTestCase {
 
     private func status(_ outcome: ItemOutcome) -> ItemOutcome.Status { outcome.status }
 
+    /// bytesFreed is measured in ALLOCATED bytes (block-rounded, matching the
+    /// scan pipeline). Expectations are captured with the same probe the
+    /// executor uses, so assertions stay exact without hardcoding blocks.
+    private let probe = ContentSizeProbe()
+
+    private func measureBefore(_ url: URL) -> Int64 {
+        probe.logicalBytes(at: url) ?? 0
+    }
+
     // MARK: - Happy path + measured bytes
 
     // bytesFreed is MEASURED (before − after re-stat), never the estimate.
@@ -115,6 +124,7 @@ final class CleanupExecutorTests: TempHomeTestCase {
             ("a.dat", 100), ("b.dat", 200), ("sub/c.dat", 300),
         ])
         let item = makeItem(name: "Example", path: dir, estimatedSize: 99_999)
+        let expectedBytes = measureBefore(dir)
 
         let events = await collect(makeExecutor().run(
             items: [item], confirmed: [item.id], destructiveConfirmed: false
@@ -132,8 +142,8 @@ final class CleanupExecutorTests: TempHomeTestCase {
         XCTAssertEqual(report.outcomes.count, 1)
         let outcome = try XCTUnwrap(report.outcomes.first)
         XCTAssertEqual(status(outcome), .removed)
-        XCTAssertEqual(outcome.bytesFreed, 600, "100 + 200 + 300 logical bytes, measured")
-        XCTAssertEqual(report.bytesFreed, 600)
+        XCTAssertEqual(outcome.bytesFreed, expectedBytes, "allocated bytes, measured")
+        XCTAssertEqual(report.bytesFreed, expectedBytes)
         XCTAssertEqual(report.itemsRemoved, 1)
         XCTAssertNil(report.freeSpaceBefore, "unknown free space stays nil")
         XCTAssertFalse(fileManager.fileExists(atPath: dir.appendingPathComponent("a.dat").path))
@@ -144,6 +154,7 @@ final class CleanupExecutorTests: TempHomeTestCase {
         let logs = tempHome.appendingPathComponent("Library/Logs")
         try FixtureBuilder.makeTree(in: logs, [("app.log", 250)])
         let file = logs.appendingPathComponent("app.log")
+        let expectedBytes = measureBefore(file)
         let item = makeItem(
             name: "Old log", path: file, method: .moveToTrash,
             risk: .review, estimatedSize: 1
@@ -158,7 +169,7 @@ final class CleanupExecutorTests: TempHomeTestCase {
         }
         let outcome = try XCTUnwrap(report.outcomes.first)
         XCTAssertEqual(status(outcome), .removed)
-        XCTAssertEqual(outcome.bytesFreed, 250, "measured, not the size: 1 estimate")
+        XCTAssertEqual(outcome.bytesFreed, expectedBytes, "measured, not the estimate")
         XCTAssertFalse(fileManager.fileExists(atPath: file.path))
         XCTAssertTrue(fileManager.fileExists(
             atPath: tempHome.appendingPathComponent(".Trash/app.log").path
@@ -169,6 +180,7 @@ final class CleanupExecutorTests: TempHomeTestCase {
     func testTrashEmptyingWithDestructiveConfirmRemovesContentsInPlace() async throws {
         let trash = tempHome.appendingPathComponent(".Trash", isDirectory: true)
         try FixtureBuilder.makeTree(in: trash, [("t1.dat", 100), ("t2.dat", 40)])
+        let expectedBytes = measureBefore(trash)
         let item = makeItem(
             name: "Trash", path: trash,
             confirmation: .destructive, category: .trash, estimatedSize: 140
@@ -183,7 +195,7 @@ final class CleanupExecutorTests: TempHomeTestCase {
         }
         let outcome = try XCTUnwrap(report.outcomes.first)
         XCTAssertEqual(status(outcome), .removed)
-        XCTAssertEqual(outcome.bytesFreed, 140)
+        XCTAssertEqual(outcome.bytesFreed, expectedBytes)
         XCTAssertTrue(fileManager.fileExists(atPath: trash.path),
                       ".Trash itself must survive being emptied")
         XCTAssertFalse(fileManager.fileExists(atPath: trash.appendingPathComponent("t1.dat").path))
@@ -195,10 +207,11 @@ final class CleanupExecutorTests: TempHomeTestCase {
     func testFailureIsolatesItems() async throws {
         let first = try cacheDir(named: "first", files: [("f.dat", 100)])
         let secondFile = tempHome.appendingPathComponent("Library/Caches/stuck.dat")
+        let third = try cacheDir(named: "third", files: [("f.dat", 300)])
+        let expectedBytes = measureBefore(first) + measureBefore(third)
         try FixtureBuilder.makeTree(
             in: secondFile.deletingLastPathComponent(), [("stuck.dat", 250)]
         )
-        let third = try cacheDir(named: "third", files: [("f.dat", 300)])
         let trashItem = makeItem(
             name: "stuck", path: secondFile, method: .moveToTrash,
             risk: .review, estimatedSize: 250
@@ -219,8 +232,8 @@ final class CleanupExecutorTests: TempHomeTestCase {
         XCTAssertEqual(report.outcomes.count, 3)
         XCTAssertEqual(report.itemsRemoved, 2)
         XCTAssertEqual(report.failureCount, 1)
-        XCTAssertEqual(report.bytesFreed, 400, "first + third; the failed item frees nothing")
-        XCTAssertEqual(report.freedBytes(in: .applicationCaches), 400)
+        XCTAssertEqual(report.bytesFreed, expectedBytes, "first + third; the failed item frees nothing")
+        XCTAssertEqual(report.freedBytes(in: .applicationCaches), expectedBytes)
         XCTAssertTrue(fileManager.fileExists(atPath: secondFile.path),
                       "failed item must be left untouched")
     }
@@ -486,6 +499,7 @@ final class CleanupExecutorTests: TempHomeTestCase {
             try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
         }
         let item = makeItem(name: "partial", path: dir)
+        let removedChildBytes = measureBefore(dir.appendingPathComponent("gone.dat"))
 
         let events = await collect(makeExecutor().run(
             items: [item], confirmed: [item.id], destructiveConfirmed: false
@@ -496,9 +510,48 @@ final class CleanupExecutorTests: TempHomeTestCase {
         }
         let outcome = try XCTUnwrap(report.outcomes.first)
         XCTAssertEqual(status(outcome), .partial)
-        XCTAssertEqual(outcome.bytesFreed, 100, "only the removed child's bytes")
+        XCTAssertEqual(outcome.bytesFreed, removedChildBytes, "only the removed child's bytes")
         XCTAssertEqual(report.itemsRemoved, 0)
         XCTAssertEqual(report.partiallyRemoved, 1)
         XCTAssertTrue(fileManager.fileExists(atPath: locked.appendingPathComponent("stuck.dat").path))
+    }
+
+    // Trash empties FIRST in a mixed batch: a recoverable item moved to
+    // ~/.Trash later must not be destroyed by this run's trash-emptying.
+    func testTrashEmptiedBeforeRecoverableItemsMoveIntoIt() async throws {
+        let trashDir = tempHome.appendingPathComponent(".Trash")
+        try Data("old".utf8).write(to: trashDir.appendingPathComponent("old.txt"))
+
+        let logDir = tempHome.appendingPathComponent("Library/Logs/app-logs")
+        try FixtureBuilder.makeTree(in: logDir, [("app.log", 100)])
+        let logItem = makeItem(
+            name: "app-logs", path: logDir, method: .moveToTrash, category: .logs
+        )
+        let trashItem = makeItem(
+            name: "Trash", path: trashDir,
+            confirmation: .destructive, category: .trash
+        )
+
+        // Log item deliberately FIRST in the submitted order — the executor
+        // must reorder trash-emptying ahead of it.
+        let events = await collect(makeExecutor(deletion: fixtureTrashExecutor()).run(
+            items: [logItem, trashItem],
+            confirmed: [logItem.id, trashItem.id],
+            destructiveConfirmed: true
+        ))
+
+        guard case .finished(let report) = events.last else {
+            return XCTFail("expected a finished event")
+        }
+        let statuses: [ItemOutcome.Status] = report.outcomes.map(\.status)
+        XCTAssertEqual(statuses, [.removed, .removed])
+        XCTAssertFalse(
+            fileManager.fileExists(atPath: trashDir.appendingPathComponent("old.txt").path),
+            "pre-existing trash content must be emptied"
+        )
+        XCTAssertTrue(
+            fileManager.fileExists(atPath: trashDir.appendingPathComponent("app-logs").path),
+            "recoverable item moved AFTER emptying stays in the Trash"
+        )
     }
 }

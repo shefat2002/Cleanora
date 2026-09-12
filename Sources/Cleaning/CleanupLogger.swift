@@ -97,14 +97,15 @@ public final class CleanupLogger: @unchecked Sendable {
 
     private func append(entry: LogEntry) -> Bool {
         let data: Data
+        // Encode under the lock: JSONEncoder is documented non-thread-safe.
+        lock.lock()
+        defer { lock.unlock() }
         do {
             data = try encoder.encode(entry)
         } catch {
             Self.log.error("cleanup log: entry not encodable: \(error.localizedDescription, privacy: .public)")
             return false
         }
-        lock.lock()
-        defer { lock.unlock() }
         guard let url = todaysFileLocked(create: true) else { return false }
         return writeDurably(data: data + Data("\n".utf8), to: url)
     }
