@@ -58,11 +58,22 @@ final class AppEnvironment {
     private var cachedHistoryStore: ScanHistoryStore?
 
     init(
-        preferences: PreferencesStore = PreferencesStore(),
+        preferences: PreferencesStore? = nil,
         scanEnvironment: ScanEnvironment = .live(),
         permissionProbe: PermissionProbe? = nil
     ) {
-        self.preferences = preferences
+        // Fixture mode must not write the user's real preference domain —
+        // scope defaults to a fixture-named suite there. An explicitly passed
+        // store always wins.
+        let defaults: UserDefaults
+        if preferences != nil {
+            defaults = .standard
+        } else if ProcessInfo.processInfo.environment["CLEANORA_FIXTURE_HOME"] != nil {
+            defaults = UserDefaults(suiteName: "com.cleanora.fixture") ?? .standard
+        } else {
+            defaults = .standard
+        }
+        self.preferences = preferences ?? PreferencesStore(defaults: defaults)
         self.scanEnvironment = scanEnvironment
         self.appDirectories = AppDirectories(environment: scanEnvironment)
         self.permissionProbe = permissionProbe ?? .live(environment: scanEnvironment)
