@@ -12,6 +12,7 @@ public struct SafetyPolicy: Sendable {
         case itemNotSelected(String)
         case missingConfirmation(String)
         case destructiveWithoutExplicitConfirm(String)
+        case symlinkLeafNotAllowed(String)
     }
 
     /// Canonicalized at init.
@@ -143,6 +144,17 @@ public struct SafetyPolicy: Sendable {
         }
         if let fragment = blockedPathFragments.first(where: { path.contains($0) }) {
             throw Violation.blockedFragment(fragment)
+        }
+        // Symlink-leaf gate (Phase 2 backlog fix): when the validated path's
+        // own leaf is a symlink that canonicalization could not resolve — the
+        // classic case being a DANGLING link inside an allowed root, which
+        // canonicalizes to the link path itself — refuse to hard-delete it.
+        // Trashing the link is always safe and recoverable (I7: the target is
+        // never touched), so `.trashDirectory` stays allowed. Live links
+        // resolve to their target above and never reach this check.
+        if item.deletionMethod != .trashDirectory,
+           (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil {
+            throw Violation.symlinkLeafNotAllowed(path)
         }
         // Defense in depth: CleanupItem's inits (memberwise + Codable) already
         // forbid `.never` (I1).

@@ -70,12 +70,68 @@ public struct ScanHistoryStore: Sendable {
         return order.map { (day: $0, entries: byDay[$0] ?? []) }
     }
 
-    /// Tolerant read: corrupt file → empty; entries stamped by a FUTURE
-    /// schema are dropped rather than displayed wrong.
+    /// Versioned migration policy (P-12).
+    ///
+    /// - Entries stamped by the CURRENT schema pass through unchanged.
+    /// - Entries stamped by an OLDER schema upgrade forward one step at a
+    ///   time via `migrationSteps`. `appendHistory` rewrites the whole file
+    ///   from migrated entries, so the persisted stamp converges to current
+    ///   on the next write.
+    /// - Entries stamped by a FUTURE schema (or an older version with no
+    ///   migration path) return nil and are logged: this build cannot know
+    ///   how to read them, so displaying them would be wrong.
+    static func migrate(_ entry: CleanupHistoryEntry) -> CleanupHistoryEntry? {
+        var migrated = entry
+        while migrated.schemaVersion < CleanupHistoryEntry.schemaVersion {
+            guard let step = migrationSteps[migrated.schemaVersion] else {
+                log.error(
+                    "history: no migration from schema \(migrated.schemaVersion, privacy: .public); entry dropped"
+                )
+                return nil
+            }
+            let upgraded = step(migrated)
+            guard upgraded.schemaVersion > migrated.schemaVersion else {
+                log.error(
+                    "history: migration step \(migrated.schemaVersion, privacy: .public) does not advance; entry dropped"
+                )
+                return nil
+            }
+            migrated = upgraded
+        }
+        guard migrated.schemaVersion == CleanupHistoryEntry.schemaVersion else {
+            log.error(
+                "history: future schema \(migrated.schemaVersion, privacy: .public) entry dropped"
+            )
+            return nil
+        }
+        return migrated
+    }
+
+    /// One-step upgrades, keyed by the version being upgraded FROM. Bump
+    /// `CleanupHistoryEntry.schemaVersion` and add its N → N+1 step here in
+    /// the same change.
+    private static let migrationSteps: [Int: @Sendable (CleanupHistoryEntry) -> CleanupHistoryEntry] = [
+        // v0 → v1: the pre-release stamp. Fields already match v1; re-stamp.
+        0: { entry in
+            CleanupHistoryEntry(
+                schemaVersion: 1,
+                id: entry.id,
+                date: entry.date,
+                bytesFreed: entry.bytesFreed,
+                itemsRemoved: entry.itemsRemoved,
+                duration: entry.duration,
+                categoryTotals: entry.categoryTotals,
+                appVersion: entry.appVersion
+            )
+        },
+    ]
+
+    /// Tolerant read: corrupt file → empty; entries migrate per
+    /// `migrate(_:)` — older forward, future dropped (and logged).
     private func readableHistory() -> [CleanupHistoryEntry] {
         let entries = (try? historyFile.read()) ?? []
         return entries
-            .filter { $0.schemaVersion <= CleanupHistoryEntry.schemaVersion }
+            .compactMap { Self.migrate($0) }
             .sorted { $0.date > $1.date }
     }
 }

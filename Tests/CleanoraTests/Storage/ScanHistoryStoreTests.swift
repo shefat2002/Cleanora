@@ -147,6 +147,112 @@ final class ScanHistoryStoreTests: TempHomeTestCase {
         XCTAssertEqual(store.history().first?.schemaVersion, CleanupHistoryEntry.schemaVersion)
     }
 
+    // MARK: - Schema migration (P-12)
+
+    // The migration hook upgrades an OLDER stamp to the current schema one
+    // step at a time, preserving every payload field.
+    func testMigrateHookUpgradesV0EntryToCurrentVersion() throws {
+        let v0 = makeEntry(date: Date(timeIntervalSince1970: 1_234), bytes: 777, schemaVersion: 0)
+
+        let migrated = try XCTUnwrap(ScanHistoryStore.migrate(v0))
+
+        XCTAssertEqual(migrated.schemaVersion, CleanupHistoryEntry.schemaVersion)
+        XCTAssertEqual(migrated.id, v0.id)
+        XCTAssertEqual(migrated.date, v0.date)
+        XCTAssertEqual(migrated.bytesFreed, 777)
+        XCTAssertEqual(migrated.itemsRemoved, v0.itemsRemoved)
+        XCTAssertEqual(migrated.duration, v0.duration)
+        XCTAssertEqual(migrated.categoryTotals, v0.categoryTotals)
+        XCTAssertEqual(migrated.appVersion, v0.appVersion)
+    }
+
+    // Migration is idempotent: a current-version entry passes through.
+    func testMigrateHookLeavesCurrentVersionEntryUnchanged() {
+        let current = makeEntry(date: Date(timeIntervalSince1970: 1_234))
+
+        XCTAssertEqual(ScanHistoryStore.migrate(current), current)
+    }
+
+    // A FUTURE stamp has no forward path — the hook drops it (the caller
+    // logs), so it can never be displayed wrong.
+    func testMigrateHookDropsFutureVersionEntry() {
+        let future = makeEntry(date: Date(timeIntervalSince1970: 1_234), schemaVersion: 99)
+
+        XCTAssertNil(ScanHistoryStore.migrate(future))
+    }
+
+    // End to end: a synthetic v0 entry on disk is served migrated, and the
+    // next append rewrites the file so the stamp converges to current.
+    func testPersistedV0EntryReadMigratedAndConvergesOnNextAppend() throws {
+        let store = makeStore()
+        let v0 = makeEntry(date: Date(timeIntervalSince1970: 500), bytes: 555, schemaVersion: 0)
+        store.appendHistory(v0)
+
+        let read = try XCTUnwrap(store.history().first)
+        XCTAssertEqual(read.schemaVersion, CleanupHistoryEntry.schemaVersion)
+        XCTAssertEqual(read.id, v0.id)
+        XCTAssertEqual(read.bytesFreed, 555)
+
+        store.appendHistory(makeEntry(date: Date(timeIntervalSince1970: 600)))
+        let reread = ScanHistoryStore(directory: directory).history()
+        XCTAssertEqual(reread.count, 2)
+        XCTAssertTrue(reread.allSatisfy { $0.schemaVersion == CleanupHistoryEntry.schemaVersion },
+                      "persisted file converged to the current schema")
+    }
+
+    // MARK: - Rotation (P-12)
+
+    func testAppending150EntriesTrimsToMaxHistoryEntriesKeepingNewest() {
+        let store = makeStore()
+        for index in 0..<150 {
+            store.appendHistory(makeEntry(date: Date(timeIntervalSince1970: Double(index))))
+        }
+
+        let entries = store.history()
+        XCTAssertEqual(entries.count, ScanHistoryStore.maxHistoryEntries)
+        XCTAssertEqual(entries.first?.date.timeIntervalSince1970, 149,
+                       "newest entry kept")
+        XCTAssertEqual(entries.last?.date.timeIntervalSince1970, 50,
+                       "oldest 50 trimmed")
+    }
+
+    // MARK: - Corruption recovery (P-12)
+
+    // A write interrupted mid-record (crash, disk full) leaves a truncated
+    // array. The store must neither crash nor surface garbage: it recovers
+    // to the readable prefix — with whole-file JSON that is the empty set —
+    // and the next append rebuilds a healthy file.
+    func testTruncatedHistoryJSONRecoversToReadablePrefixWithoutCrashing() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let complete = String(
+            data: try encoder.encode(makeEntry(date: Date(timeIntervalSince1970: 10))),
+            encoding: .utf8
+        )!
+        try Data("[\(complete),\n{\"schemaVersion\":1,\"i".utf8).write(to: historyURL())
+
+        let store = makeStore()
+        let recovered = store.history()
+        XCTAssertLessThanOrEqual(recovered.count, 1,
+                                 "at most the single readable prefix record")
+        XCTAssertTrue(recovered.allSatisfy { $0.schemaVersion <= CleanupHistoryEntry.schemaVersion })
+
+        let entry = makeEntry(date: Date(timeIntervalSince1970: 20))
+        store.appendHistory(entry)
+        XCTAssertEqual(store.history().count, recovered.count + 1)
+        XCTAssertEqual(store.history().last?.id, entry.id)
+    }
+
+    // Truncated last-scan file behaves like any other corruption: nil.
+    func testTruncatedLastScanJSONReturnsNil() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("{\"startedAt\":\"2026-09-12T10:00:00Z\",\"it".utf8)
+            .write(to: directory.appendingPathComponent("lastscan.json"))
+
+        XCTAssertNil(makeStore().lastScan())
+    }
+
     // MARK: - Day grouping (History UI)
 
     func testHistoryGroupedByDayNewestDayFirstEntriesNewestFirst() {

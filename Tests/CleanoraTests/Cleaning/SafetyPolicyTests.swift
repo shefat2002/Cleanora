@@ -192,11 +192,8 @@ final class SafetyPolicyTests: TempHomeTestCase {
         XCTAssertTrue(url.path == "/private/tmp" || url.path.hasPrefix("/private/tmp"))
     }
 
-    // Gap: an allowed-root path whose symlink resolves OUT of the allowlist
+    // An allowed-root path whose symlink resolves OUT of the allowlist
     // must be judged by its target (canonicalization runs before checks).
-    // NOTE: this holds only when the target EXISTS — a dangling symlink
-    // canonicalizes to the link path itself and passes the gate (reported
-    // to the lead as a SafetyPolicy gap; not fixable here, policy is frozen).
     func testSymlinkEscapingAllowlistRejected() throws {
         let fm = FileManager.default
         let documents = tempHome.appendingPathComponent("Documents")
@@ -211,6 +208,81 @@ final class SafetyPolicyTests: TempHomeTestCase {
             withDestinationURL: documents.appendingPathComponent("secret.txt")
         )
         let item = makeItem(path: escape)
+        let expected = policy.canonicalized(escape).path
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(error as? SafetyPolicy.Violation, .outsideAllowedRoots(expected))
+        }
+    }
+
+    // Symlink-leaf gate (Phase 2 backlog fix): a link that canonicalization
+    // cannot resolve — the classic case being a DANGLING symlink inside an
+    // allowed root, which canonicalizes to the link path itself — must not
+    // be hard-deleted. Permanent removal of an unverifiable link is refused.
+    func testDanglingSymlinkLeafRemoveContentsRejected() throws {
+        let fm = FileManager.default
+        let caches = tempHome.appendingPathComponent("Library/Caches")
+        try fm.createDirectory(at: caches, withIntermediateDirectories: true)
+        let dangling = caches.appendingPathComponent("dangling")
+        try fm.createSymbolicLink(
+            at: dangling,
+            withDestinationURL: tempHome.appendingPathComponent("Documents/never-existed")
+        )
+
+        let item = makeItem(path: dangling, deletionMethod: .removeContents)
+        let expected = policy.canonicalized(item.path).path
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(error as? SafetyPolicy.Violation, .symlinkLeafNotAllowed(expected))
+        }
+    }
+
+    // Trashing a symlink leaf is always safe and recoverable (I7: the target
+    // is never touched), so `.trashDirectory` stays allowed even for a
+    // dangling leaf.
+    func testDanglingSymlinkLeafTrashDirectoryAllowed() throws {
+        let fm = FileManager.default
+        let caches = tempHome.appendingPathComponent("Library/Caches")
+        try fm.createDirectory(at: caches, withIntermediateDirectories: true)
+        let dangling = caches.appendingPathComponent("dangling")
+        try fm.createSymbolicLink(
+            at: dangling,
+            withDestinationURL: tempHome.appendingPathComponent("Documents/never-existed")
+        )
+
+        let item = makeItem(path: dangling, deletionMethod: .trashDirectory)
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    // A live link whose target is inside an allowed root keeps validating —
+    // it resolves to the target, which is not itself a symlink leaf.
+    func testLiveSymlinkResolvingInsideAllowedRootTrashDirectoryAllowed() throws {
+        let fm = FileManager.default
+        let caches = tempHome.appendingPathComponent("Library/Caches")
+        let real = caches.appendingPathComponent("real-dir")
+        try fm.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = caches.appendingPathComponent("link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: real)
+
+        let item = makeItem(path: link, deletionMethod: .trashDirectory)
+        XCTAssertEqual(policy.canonicalized(item.path).path, policy.canonicalized(real).path)
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    // An escaping live link stays rejected regardless of deletion method —
+    // existing behavior, judged by its (outside) target before the leaf gate.
+    func testLiveSymlinkEscapingAllowlistRemoveContentsRejected() throws {
+        let fm = FileManager.default
+        let documents = tempHome.appendingPathComponent("Documents")
+        try fm.createDirectory(at: documents, withIntermediateDirectories: true)
+        try Data("secret".utf8).write(to: documents.appendingPathComponent("secret.txt"))
+        try fm.createDirectory(
+            at: tempHome.appendingPathComponent("Library/Caches"), withIntermediateDirectories: true
+        )
+        let escape = tempHome.appendingPathComponent("Library/Caches/escape")
+        try fm.createSymbolicLink(
+            at: escape,
+            withDestinationURL: documents.appendingPathComponent("secret.txt")
+        )
+        let item = makeItem(path: escape, deletionMethod: .removeContents)
         let expected = policy.canonicalized(escape).path
         XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
             XCTAssertEqual(error as? SafetyPolicy.Violation, .outsideAllowedRoots(expected))

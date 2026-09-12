@@ -240,6 +240,8 @@ public struct CleanupExecutor: Sendable {
             return "Refused: no user confirmation for (\(path))"
         case .destructiveWithoutExplicitConfirm(let path):
             return "Refused: destructive cleanup needs explicit confirmation (\(path))"
+        case .symlinkLeafNotAllowed(let path):
+            return "Refused: unverifiable symlink; only the recoverable trash method is allowed (\(path))"
         }
     }
 
