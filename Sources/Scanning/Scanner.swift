@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ScannerOutcome: Sendable {
+public enum ScannerOutcome: Equatable, Sendable {
     case produced([CleanupItem])
     case skipped(SkipReason)
 }
