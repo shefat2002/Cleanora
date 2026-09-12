@@ -52,6 +52,37 @@ public struct ScanCoordinator: Sendable {
         ]
     }
 
+    /// Phase 2: phase one plus the developer composite and large files. The
+    /// extra scanners are always included — they self-gate (DeveloperScanner
+    /// on `options.includeDeveloperData`, LargeFileScanner on
+    /// `options.enabledCategories`) and the coordinator renders disabled rows
+    /// as `.skipped(.disabledByUser)`, so Settings toggles stay visible and
+    /// explained.
+    public static func fullScanners(
+        environment: ScanEnvironment,
+        options: ScanOptions
+    ) -> [any Scanner] {
+        phaseOneScanners(environment: environment) + [
+            DeveloperScanner(),
+            LargeFileScanner(),
+        ]
+    }
+
+    /// Every progress row the UI will see for this run: enabled fan-out
+    /// scanners expand into their row keys, everything else (and every
+    /// disabled scanner) contributes its single `progressKey`.
+    public func allProgressKeys() -> [ScannerKey] {
+        scanners.flatMap { scanner -> [ScannerKey] in
+            guard options.enabledCategories.contains(scanner.category) else {
+                return [scanner.progressKey]
+            }
+            if let fanOut = scanner as? any ProgressFanOutScanner {
+                return fanOut.rowKeys(environment: environment, options: options)
+            }
+            return [scanner.progressKey]
+        }
+    }
+
     // MARK: - Execution
 
     private func execute(into continuation: AsyncStream<ScanUpdate>.Continuation) async {

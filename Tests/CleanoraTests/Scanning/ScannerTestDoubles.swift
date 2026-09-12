@@ -107,3 +107,23 @@ enum TestItems {
 func canonicalTestPath(_ url: URL) -> URL {
     url.resolvingSymlinksInPath()
 }
+
+/// Thread-safe progress collector for scanner tests — `onProgress` is
+/// `@Sendable`, so captured locals cannot be mutated from inside it.
+final class StateRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _states: [ScannerKey: ScannerState] = [:]
+
+    /// Last state seen per key.
+    var states: [ScannerKey: ScannerState] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _states
+    }
+
+    func record(_ key: ScannerKey, _ state: ScannerState) {
+        lock.lock()
+        defer { lock.unlock() }
+        _states[key] = state
+    }
+}

@@ -377,4 +377,33 @@ final class ScanCoordinatorTests: TempHomeTestCase {
         XCTAssertEqual(Set(scanners.map(\.category)), Set(ScanCategory.phaseOne))
         XCTAssertTrue(scanners.allSatisfy(\.isPhaseOne))
     }
+
+    func testFullScannersFactoryAlwaysReturnsTheFullSet() {
+        var options = ScanOptions()
+        options.includeDeveloperData = false
+
+        let scanners = ScanCoordinator.fullScanners(environment: environment, options: options)
+
+        let categories = Set(scanners.map(\.category))
+        XCTAssertTrue(Set(ScanCategory.phaseOne).isSubset(of: categories))
+        XCTAssertTrue(categories.contains(.developerData), "developer composite is always present; it self-gates")
+        XCTAssertTrue(categories.contains(.largeFiles), "large files are always present; they are informational")
+    }
+
+    func testFullScannersFactoryIgnoresDeveloperFlag() {
+        var gated = ScanOptions()
+        gated.includeDeveloperData = true
+        var ungated = ScanOptions()
+        ungated.includeDeveloperData = false
+
+        let withGate = ScanCoordinator.fullScanners(environment: environment, options: gated)
+        let withoutGate = ScanCoordinator.fullScanners(environment: environment, options: ungated)
+
+        XCTAssertEqual(
+            Set(withGate.map(\.category)),
+            Set(withoutGate.map(\.category)),
+            "the factory is flag-independent: gating lives in enabledCategories and scanner self-gates"
+        )
+        XCTAssertTrue(Set(ScanCategory.phaseOne).isSubset(of: Set(withGate.map(\.category))))
+    }
 }

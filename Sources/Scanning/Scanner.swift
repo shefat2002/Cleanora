@@ -23,6 +23,18 @@ public protocol Scanner: Sendable {
     ) async throws -> ScannerOutcome
 }
 
+/// Phase-2 additive extension: scanners whose progress fans out into more
+/// rows than their own `progressKey` — Xcode's four roots, the developer
+/// composite's per-tool rows. Fan-out scanners emit ONLY their row keys;
+/// `progressKey` stays the coordinator-facing bookkeeping aggregate. The UI
+/// enumerates the rows it will see (before the scan starts) via
+/// `ScanCoordinator.allProgressKeys()`.
+public protocol ProgressFanOutScanner: Scanner {
+    /// Every row key this scanner may emit for the given options. Gated-off
+    /// fan-out collapses to the scanner's single `progressKey`.
+    func rowKeys(environment: ScanEnvironment, options: ScanOptions) -> [ScannerKey]
+}
+
 /// Test double for coordinator + UI work; lets the UI be built against a
 /// fixture scanner before real ones land.
 public struct MockScanner: Scanner {
