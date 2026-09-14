@@ -8,6 +8,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable,
     case trash
     case developerData      // Phase 2
     case largeFiles         // Phase 2
+    case appLeftovers       // Phase 3 — uninstaller flow
 
     public var id: String { rawValue }
 
@@ -20,6 +21,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable,
         case .trash: return "Trash"
         case .developerData: return "Developer Data"
         case .largeFiles: return "Large Files"
+        case .appLeftovers: return "App Leftovers"
         }
     }
 
@@ -32,6 +34,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable,
         case .trash: return "trash"
         case .developerData: return "hammer"
         case .largeFiles: return "doc.badge.gearshape"
+        case .appLeftovers: return "app.badge"
         }
     }
 
@@ -52,6 +55,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable,
         case .trash: return 4
         case .developerData: return 5
         case .largeFiles: return 6
+        case .appLeftovers: return 7
         }
     }
 

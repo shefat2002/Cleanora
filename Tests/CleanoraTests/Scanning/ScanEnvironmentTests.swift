@@ -22,4 +22,35 @@ final class ScanEnvironmentTests: TempHomeTestCase {
         XCTAssertEqual(live.home, FileManager.default.homeDirectoryForCurrentUser)
         XCTAssertTrue(live.exists(live.home))
     }
+
+    // MARK: - Phase 3: applications root (M-06)
+
+    func testApplicationsDefaultsToTheSystemApplicationsFolder() {
+        XCTAssertEqual(
+            environment.applications.standardizedFileURL.path,
+            URL(fileURLWithPath: "/Applications", isDirectory: true).standardizedFileURL.path
+        )
+    }
+
+    func testApplicationsOverrideIsInjectableForTests() {
+        let override = tempHome.appendingPathComponent("OverrideApps", isDirectory: true)
+        let custom = ScanEnvironment(
+            home: tempHome,
+            temporaryRoot: tempRoot,
+            applicationsOverride: override
+        )
+        XCTAssertEqual(custom.applications, override)
+        // The default environment is untouched by the new parameter.
+        XCTAssertEqual(
+            ScanEnvironment(home: tempHome, temporaryRoot: tempRoot).applications,
+            ScanEnvironment.systemApplications
+        )
+    }
+
+    func testUserApplicationsFolderIsDerivedFromHome() {
+        XCTAssertEqual(
+            environment.userApplications.path,
+            tempHome.appendingPathComponent("Applications").path
+        )
+    }
 }

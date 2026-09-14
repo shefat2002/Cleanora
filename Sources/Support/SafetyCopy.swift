@@ -44,6 +44,13 @@ enum SafetyCopy {
             Large files are listed so you can decide — Cleanora never deletes them \
             automatically. Review each one and move only what you no longer need.
             """
+        case .appLeftovers:
+            return """
+            When you uninstall an app, its caches, preferences and support files \
+            usually stay behind. Cleanora lists what it found next to the app bundle \
+            so you can review each file before anything is removed — nothing is \
+            deleted without your say-so.
+            """
         }
     }
 }

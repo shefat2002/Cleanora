@@ -8,10 +8,18 @@ import Foundation
 public struct ScanEnvironment: Sendable {
     public let home: URL
     public let temporaryRoot: URL
+    /// M-06 test seam: replaces the system applications root. Nil = default.
+    private let applicationsOverride: URL?
 
-    public init(home: URL, temporaryRoot: URL) {
+    /// The machine-wide applications folder. It is a SYSTEM location, not
+    /// home-derived, so it cannot live in the derived-accessors family above
+    /// — the override exists so engine tests never touch the real folder.
+    public static let systemApplications = URL(fileURLWithPath: "/Applications", isDirectory: true)
+
+    public init(home: URL, temporaryRoot: URL, applicationsOverride: URL? = nil) {
         self.home = home
         self.temporaryRoot = temporaryRoot
+        self.applicationsOverride = applicationsOverride
     }
 
     /// Supports the CLEANORA_FIXTURE_HOME QA seam: points the whole engine
@@ -29,7 +37,14 @@ public struct ScanEnvironment: Sendable {
                     "CLEANORA_FIXTURE_HOME must point to an existing fixture directory, got: \(fixtureHome)"
                 )
             }
-            return ScanEnvironment(home: home, temporaryRoot: home.appendingPathComponent("tmp"))
+            return ScanEnvironment(
+                home: home,
+                temporaryRoot: home.appendingPathComponent("tmp"),
+                // The fixture seam re-aims the WHOLE engine at the fixture
+                // tree, the applications inventory included — QA must never
+                // see the machine's real /Applications while in fixture mode.
+                applicationsOverride: home.appendingPathComponent("Applications", isDirectory: true)
+            )
         }
         return ScanEnvironment(
             home: FileManager.default.homeDirectoryForCurrentUser,
@@ -46,6 +61,15 @@ public struct ScanEnvironment: Sendable {
         home.appendingPathComponent("Library/Application Support", isDirectory: true)
     }
     public var trash: URL { home.appendingPathComponent(".Trash", isDirectory: true) }
+
+    /// M-06: the per-user applications folder, alongside the system-wide
+    /// `applications` root.
+    public var userApplications: URL {
+        home.appendingPathComponent("Applications", isDirectory: true)
+    }
+    /// M-06: the applications root the inventory scans — the injected
+    /// override when one is set, the system folder otherwise.
+    public var applications: URL { applicationsOverride ?? Self.systemApplications }
 
     public func exists(_ url: URL) -> Bool {
         FileManager.default.fileExists(atPath: url.path)

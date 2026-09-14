@@ -27,4 +27,22 @@ final class ScanCategoryTests: XCTestCase {
         XCTAssertEqual(ScanCategory.scanOrder.count, ScanCategory.allCases.count)
         XCTAssertEqual(ScanCategory.scanOrder, ScanCategory.scanOrder.sorted { $0.sortOrder < $1.sortOrder })
     }
+
+    // MARK: - Phase 3: .appLeftovers (M-06)
+
+    func testAppLeftoversSortsAfterLargeFiles() {
+        XCTAssertGreaterThan(ScanCategory.appLeftovers.sortOrder, ScanCategory.largeFiles.sortOrder)
+        XCTAssertEqual(ScanCategory.scanOrder.last, .appLeftovers)
+    }
+
+    func testAppLeftoversHasItsOwnCopyAndSymbol() {
+        XCTAssertNotEqual(ScanCategory.appLeftovers.whyText, "")
+        XCTAssertEqual(ScanCategory.appLeftovers.displayName, "App Leftovers")
+        XCTAssertFalse(ScanCategory.appLeftovers.symbolName.isEmpty)
+    }
+
+    func testAppLeftoversIsNotPartOfPhaseOne() {
+        XCTAssertFalse(ScanCategory.phaseOne.contains(.appLeftovers))
+        XCTAssertFalse(ScanCategory.appLeftovers.requiresElevatedConfirmation)
+    }
 }
