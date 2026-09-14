@@ -4,13 +4,16 @@ import SwiftUI
 struct CleanoraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var environment = AppEnvironment()
+    @State private var menuBarController = MenuBarController()
 
-    // body is split into builder properties: the three scenes + modifiers in
-    // one expression exceeded the type checker's budget.
+    // body is split into builder properties: the scenes + modifiers in one
+    // expression exceeded the type checker's budget. The menu bar item is
+    // NOT a scene — SceneBuilder's buildIf + MenuBarExtra crashes this
+    // toolchain's type checker, so MenuBarController (NSStatusItem + popover)
+    // owns its appearance instead.
     var body: some Scene {
         mainScene
         settingsScene
-        menuBarScene
     }
 
     private var mainScene: some Scene {
@@ -41,40 +44,22 @@ struct CleanoraApp: App {
         }
     }
 
-    /// M-01: the menu bar item only exists while the preference is on.
-    /// SceneBuilder supports conditional scenes, so toggling Settings
-    /// adds/removes the extra live.
-    private var isMenuBarEnabled: Bool {
-        environment.preferences.value.menuBarEnabled
-    }
-
-    @SceneBuilder
-    private var menuBarScene: some Scene {
-        if isMenuBarEnabled {
-            menuBarExtra
-        } else {
-            EmptyScene()
-        }
-    }
-
-    private var menuBarExtra: some Scene {
-        MenuBarExtra {
-            Text("menu bar placeholder")
-        } label: {
-            Image(systemName: "sparkles")
-        }
-        .menuBarExtraStyle(.window)
-    }
-
     /// Closing the main window must not quit the app while the menu bar item
     /// is alive; the delegate re-checks on every window close.
     private func syncMenuBarState() {
         appDelegate.isMenuBarEnabled = environment.preferences.value.menuBarEnabled
+        menuBarController.activateMainWindow = {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        menuBarController.update(
+            enabled: environment.preferences.value.menuBarEnabled,
+            environment: environment
+        )
     }
 }
 
-/// The menu bar extra's content, extracted so the scene builder expression
-/// stays inside the type checker's budget.
+/// The menu bar panel's content, extracted so heavy views stay out of the
+/// scene builder's type-checking budget.
 private struct MenuBarSceneContent: View {
     let environment: AppEnvironment
 

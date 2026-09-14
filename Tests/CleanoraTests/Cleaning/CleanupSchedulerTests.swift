@@ -9,8 +9,10 @@ import XCTest
 final class CleanupSchedulerTests: TempHomeTestCase {
     /// Deterministic "now" for every scheduler in this suite.
     private let baseDate = Date(timeIntervalSince1970: 1_790_000_000)
-    private var defaults: UserDefaults!
-    private var historyDirectory: URL!
+    /// nonisolated(unsafe): written once in setUpWithError (nonisolated),
+    /// read only from @MainActor test methods afterwards.
+    nonisolated(unsafe) private var defaults: UserDefaults!
+    nonisolated(unsafe) private var historyDirectory: URL!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -196,13 +198,13 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         scheduler.start()
         XCTAssertEqual(scheduler.nextRun, baseDate.addingTimeInterval(7 * 86_400),
                        "no previous run: first fire is one interval out")
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 1 })
+        let conditionMet1 = await waitUntil { sleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet1)
         XCTAssertEqual(sleeper.requestedDelays.first ?? 0, 7 * 86_400, accuracy: 0.001)
         XCTAssertEqual(recorder.scanCount, 0, "nothing fires before the interval elapses")
 
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
-        XCTAssertTrue(await waitUntil { !recorder.cleanSelections.isEmpty })
+        let conditionMet2 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet2)
+        let conditionMet3 = await waitUntil { !recorder.cleanSelections.isEmpty }; XCTAssertTrue(conditionMet3)
         XCTAssertEqual(recorder.cleanSelections.first, [cache.id])
 
         // The fire consumed a schedule slot, persisted it, and recorded the
@@ -210,7 +212,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         XCTAssertEqual(recorder.scannedOptions.first?.enabledCategories,
                        Preferences().enabledCategories,
                        "the scan runs with the stored options")
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 2 })
+        let conditionMet4 = await waitUntil { sleeper.requestedDelays.count == 2 }; XCTAssertTrue(conditionMet4)
         XCTAssertEqual(sleeper.requestedDelays.last ?? 0, 7 * 86_400, accuracy: 0.001)
 
         let persisted = ScanHistoryStore(directory: historyDirectory).lastScan()
@@ -231,9 +233,9 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         scheduler.start()
         scheduler.start()
 
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 1 })
+        let conditionMet5 = await waitUntil { sleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet5)
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
+        let conditionMet6 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet6)
         // Give a hypothetical second loop time to misfire; it must not exist.
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(recorder.scanCount, 1)
@@ -258,8 +260,8 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         scheduler.start()
 
         // The catch-up fires WITHOUT any released sleep — immediately on start.
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 1 })
+        let conditionMet7 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet7)
+        let conditionMet8 = await waitUntil { sleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet8)
         XCTAssertEqual(sleeper.requestedDelays.first ?? 0, 86_400, accuracy: 0.001,
                        "after the catch-up, the cadence resyncs to a full interval")
         XCTAssertEqual(PreferencesStore(defaults: defaults).value.lastScheduledRun, baseDate)
@@ -267,7 +269,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         // At most ONE catch-up: releasing the gate produces the NEXT regular
         // fire, not a burst replaying the two other missed periods.
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 2 })
+        let conditionMet9 = await waitUntil { recorder.scanCount == 2 }; XCTAssertTrue(conditionMet9)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(recorder.scanCount, 2)
 
@@ -286,14 +288,14 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
         scheduler.start()
 
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 1 })
+        let conditionMet10 = await waitUntil { sleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet10)
         XCTAssertEqual(recorder.scanCount, 0, "no catch-up before the slot is due")
         XCTAssertEqual(sleeper.requestedDelays.first ?? 0, 86_400 - 3_600, accuracy: 1.0,
                        "the remaining time of the original interval, not a fresh one")
         XCTAssertEqual(scheduler.nextRun, baseDate.addingTimeInterval(-3_600 + 86_400))
 
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
+        let conditionMet11 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet11)
 
         scheduler.stop()
     }
@@ -320,7 +322,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
         scheduler.start()
         sleeper.release()
-        XCTAssertTrue(await waitUntil { !recorder.cleanSelections.isEmpty })
+        let conditionMet12 = await waitUntil { !recorder.cleanSelections.isEmpty }; XCTAssertTrue(conditionMet12)
 
         XCTAssertEqual(
             Set(recorder.cleanSelections.first ?? []),
@@ -342,7 +344,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
         scheduler.start()
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
+        let conditionMet13 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet13)
         try await Task.sleep(for: .milliseconds(50))
 
         XCTAssertEqual(recorder.cleanSelections, [], "notify-only: nothing is cleaned")
@@ -366,7 +368,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
         scheduler.start()
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
+        let conditionMet14 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet14)
         try await Task.sleep(for: .milliseconds(50))
 
         XCTAssertEqual(recorder.cleanSelections, [], "an empty safe selection cleans nothing")
@@ -384,13 +386,13 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
         scheduler.start()
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
+        let conditionMet15 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet15)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(recorder.cleanSelections, [])
 
         // The loop survives a nil scan: the next slot still fires.
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 2 })
+        let conditionMet16 = await waitUntil { recorder.scanCount == 2 }; XCTAssertTrue(conditionMet16)
 
         scheduler.stop()
     }
@@ -407,7 +409,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
         first.start()
         sleeper.release()
-        XCTAssertTrue(await waitUntil { recorder.scanCount == 1 })
+        let conditionMet17 = await waitUntil { recorder.scanCount == 1 }; XCTAssertTrue(conditionMet17)
         first.stop()
 
         // A new scheduler over the same persisted preferences resumes: the
@@ -420,7 +422,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         )
 
         second.start()
-        XCTAssertTrue(await waitUntil { secondSleeper.requestedDelays.count == 1 })
+        let conditionMet18 = await waitUntil { secondSleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet18)
         XCTAssertEqual(secondRecorder.scanCount, 0, "not overdue: no immediate fire")
         XCTAssertEqual(secondSleeper.requestedDelays.first ?? 0, 7 * 86_400, accuracy: 0.001)
 
@@ -438,7 +440,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         )
 
         scheduler.start()
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 1 })
+        let conditionMet19 = await waitUntil { sleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet19)
         XCTAssertTrue(scheduler.isRunning)
 
         scheduler.stop()
@@ -472,7 +474,7 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         )
 
         scheduler.start()
-        XCTAssertTrue(await waitUntil { sleeper.requestedDelays.count == 1 })
+        let conditionMet20 = await waitUntil { sleeper.requestedDelays.count == 1 }; XCTAssertTrue(conditionMet20)
         XCTAssertEqual(sleeper.requestedDelays.first ?? 0, expectDelay, accuracy: 0.001)
 
         scheduler.stop()

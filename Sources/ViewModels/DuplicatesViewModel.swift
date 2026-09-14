@@ -41,7 +41,7 @@ final class DuplicatesViewModel {
         let id: UUID
         let keeperURL: URL
         let wastedBytes: Int64
-        let rows: [FileRow]
+        var rows: [FileRow]
         var selectedRows: [FileRow] { rows.filter(\.isSelected) }
         var selectedBytes: Int64 { selectedRows.reduce(0) { $0 + $1.sizeBytes } }
         /// Tri-state over the deletable rows only — the keeper never counts.
@@ -162,29 +162,29 @@ final class DuplicatesViewModel {
         groupsFound = 0
         let scope = self.scope
         let options = Self.scanOptions
-        task = Task { [weak self] in
+        task = Task { [weak self, findDuplicates = self.findDuplicates, fileSize = self.fileSize, modificationDate = self.modificationDate] in
             let progress: @Sendable (Int, Int) -> Void = { examined, groups in
-                Task { @MainActor [weak self] in
+                Task { @MainActor in
                     self?.applyProgress(examined: examined, groups: groups)
                 }
             }
+            guard let self else { return }
             do {
-                let groups = try await self.findDuplicates(scope, options, progress)
-                guard let self else { return }
+                let groups = try await findDuplicates(scope, options, progress)
                 guard !Task.isCancelled else {
                     self.phase = .cancelled
                     return
                 }
                 self.cards = Self.buildCards(
                     for: groups,
-                    fileSize: self.fileSize,
-                    modificationDate: self.modificationDate
+                    fileSize: fileSize,
+                    modificationDate: modificationDate
                 )
                 self.phase = .finished
             } catch is CancellationError {
-                self?.phase = .cancelled
+                self.phase = .cancelled
             } catch {
-                self?.phase = .failed(error.localizedDescription)
+                self.phase = .failed(error.localizedDescription)
             }
         }
     }

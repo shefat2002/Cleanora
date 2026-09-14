@@ -1,6 +1,7 @@
 import XCTest
 @testable import Cleanora
 
+@MainActor
 final class MenuBarPanelViewModelTests: XCTestCase {
     // MARK: - Junk estimate
 
