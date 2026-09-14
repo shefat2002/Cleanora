@@ -109,8 +109,7 @@ final class HistoryViewModelTests: XCTestCase {
 
     /// Cross-check (P-11): the view model's day grouping must agree with the
     /// store's `historyGroupedByDay()` on both the day order and membership.
-    func testDayGroupingAgreesWithStoreGroupedAPI() throws {
-        let folder = FileManager.default.temporaryDirectory
+    func testDayGroupingAgreesWithStoreGroupedAPI() throws {        let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("cleanora-hist-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -140,6 +139,33 @@ final class HistoryViewModelTests: XCTestCase {
             )
             XCTAssertEqual(vmGroup.entries.count, storeGroups[index].entries.count)
         }
+    }
+
+    /// The real wiring: the view model's clear capability routes to the
+    /// store — entries go, the last scan stays (dashboard state, not history).
+    func testClearHistoryRoutesToStoreAndKeepsLastScan() {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cleanora-hist-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let store = ScanHistoryStore(directory: folder)
+        store.appendHistory(VMFixtures.historyEntry(date: VMFixtures.fixedNow))
+        store.saveLastScan(VMFixtures.scanResult(items: []))
+
+        let viewModel = HistoryViewModel(
+            load: { store.history() },
+            clear: { store.clearHistory() }
+        )
+        viewModel.refresh(now: VMFixtures.fixedNow, calendar: calendar, locale: locale, timeZone: timeZone)
+        XCTAssertEqual(viewModel.groups.count, 1)
+
+        viewModel.clearHistory()
+
+        XCTAssertTrue(store.history().isEmpty, "the store really loses every entry")
+        XCTAssertNil(viewModel.groups.first, "the screen re-derives to the empty state")
+        XCTAssertNotNil(store.lastScan(), "the last scan is kept — it is not history")
+        XCTAssertFalse(viewModel.canClearHistory == false, "capability stays available")
     }
 }
 

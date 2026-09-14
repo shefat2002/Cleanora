@@ -31,7 +31,10 @@ final class HistoryViewModel {
     }
 
     convenience init(environment: AppEnvironment) {
-        self.init(load: { environment.scanHistoryStore.history() })
+        self.init(
+            load: { environment.scanHistoryStore.history() },
+            clear: { environment.scanHistoryStore.clearHistory() }
+        )
     }
 
     var canClearHistory: Bool { clear != nil }
