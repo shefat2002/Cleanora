@@ -18,24 +18,34 @@ final class MenuBarPanelViewModel {
     private let loadLastScan: @MainActor () -> ScanResult?
     private let loadDiskOverview: @MainActor () -> DiskOverview?
     private let loadLastCleanupDate: @MainActor () -> Date?
+    private let openMainWindowAction: @MainActor () -> Void
     private let startScanAction: @MainActor () -> Void
 
     init(
         loadLastScan: @escaping @MainActor () -> ScanResult?,
         loadDiskOverview: @escaping @MainActor () -> DiskOverview?,
         loadLastCleanupDate: @escaping @MainActor () -> Date?,
+        openMainWindowAction: @escaping @MainActor () -> Void,
         startScanAction: @escaping @MainActor () -> Void
     ) {
         self.loadLastScan = loadLastScan
         self.loadDiskOverview = loadDiskOverview
         self.loadLastCleanupDate = loadLastCleanupDate
+        self.openMainWindowAction = openMainWindowAction
         self.startScanAction = startScanAction
     }
 
-    /// `openMainWindow` runs first so the scan route lands in a visible
-    /// window; the scan itself is the exact flow the dashboard button runs.
-    func scanNow(openMainWindow: @MainActor () -> Void) {
-        openMainWindow()
+    /// Opens the main window (activating the app). The popover-hosted panel
+    /// has no scene context, so this routes through the handler CleanoraApp
+    /// captured from a scene-hosted view.
+    func openMainWindow() {
+        openMainWindowAction()
+    }
+
+    /// The window opens first so the scan route lands somewhere visible; the
+    /// scan itself is the exact flow the dashboard button runs.
+    func scanNow() {
+        openMainWindowAction()
         startScanAction()
     }
 

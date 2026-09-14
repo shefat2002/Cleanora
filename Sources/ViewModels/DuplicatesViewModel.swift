@@ -72,8 +72,6 @@ final class DuplicatesViewModel {
     private(set) var filesExamined = 0
     private(set) var groupsFound = 0
 
-    var searchText = ""
-
     var isScanning: Bool { phase == .scanning }
     var canScan: Bool { !scope.isEmpty && !isScanning }
     var wastedBytes: Int64 { cards.reduce(0) { $0 + $1.wastedBytes } }

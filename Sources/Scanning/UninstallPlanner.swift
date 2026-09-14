@@ -9,11 +9,16 @@ import Foundation
 /// `.moveToTrash` (recoverable, never preselected) and carries
 /// `.appLeftovers` — the flow is informational until the user opts in.
 ///
-/// Honesty note, deliberate: several planned locations (Preferences, the
-/// sandbox Containers, /Applications itself) sit OUTSIDE the deletion gate's
-/// allowed roots, and the gate will refuse them at cleanup time. They are
-/// planned anyway so the user sees the complete footprint; the refusal is
-/// real and must be rendered as such, not worked around.
+/// Gate behavior (SafetyPolicy's `.appLeftovers` carve-out): every planned
+/// item carries `.review` + `.moveToTrash`, so the bundle under /Applications
+/// and the home-side leftovers (caches, Application Support, HTTPStorages,
+/// WebKit, Saved Application State) validate at cleanup. Two locations still
+/// refuse, by design: the Preferences plist (blocked root — a live pref file
+/// may be shared by running services) and the sandbox Containers folder
+/// (permanent exclusion, the Docker invariant). Both are planned anyway so
+/// the user sees the complete footprint; the refusal is real and must be
+/// rendered as such, not worked around — the Containers item's reason says
+/// so in plain words.
 ///
 /// Whether the app is currently running is a UI concern
 /// (`NSRunningApplication`), not an engine one — the planner never probes

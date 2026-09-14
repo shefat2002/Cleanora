@@ -87,7 +87,11 @@ final class SuggestionsViewModelTests: XCTestCase {
 
     @MainActor
     func testRefreshLoadsFromProvider() {
-        let result = VMFixtures.scanResult(items: [])
+        // A scan with something big in the Trash trips the engine's Trash
+        // rule, so the provider handoff is observable end to end.
+        let result = VMFixtures.scanResult(items: [
+            VMFixtures.item(name: "Trash", category: .trash, size: 6_000_000_000, risk: .safe)
+        ])
         var stored: ScanResult?
         let viewModel = SuggestionsViewModel(loadLastScan: { stored })
 
@@ -97,6 +101,7 @@ final class SuggestionsViewModelTests: XCTestCase {
         stored = result
         viewModel.refresh()
         XCTAssertFalse(viewModel.isEmpty)
+        XCTAssertEqual(viewModel.recommendations.first?.category, .trash)
     }
 
     // MARK: - Accessibility
@@ -109,6 +114,6 @@ final class SuggestionsViewModelTests: XCTestCase {
         XCTAssertTrue(label.contains("Not touched in 90 days."))
         XCTAssertTrue(label.contains("2.0 GB"))
         XCTAssertTrue(label.contains("Developer Data"), "VoiceOver must read the full category name")
-        XCTAssertTrue(label.contains("Nothing is selected") || label.contains("highlights"))
+        XCTAssertTrue(label.contains("nothing is selected"))
     }
 }

@@ -55,15 +55,27 @@ final class CleanupSchedulerTests: TempHomeTestCase {
 
     /// Cancellation-aware, gate-released sleeper: the scheduler loop parks
     /// here until the test releases it, so no test ever waits a real interval.
+    /// A `release()` that lands BEFORE the loop has parked (tests that call
+    /// `start()` and `release()` back-to-back — same actor, so the loop cannot
+    /// have suspended yet) is remembered and consumed by the next `sleep`;
+    /// without that, the wakeup is lost and the fire never happens.
     private final class GatedSleeper: @unchecked Sendable {
         private let lock = NSLock()
         private var requested: [TimeInterval] = []
         private var pending: CheckedContinuation<Void, any Error>?
+        private var outstandingReleases = 0
 
         var requestedDelays: [TimeInterval] { lock.withLock { requested } }
 
         func sleep(_ delay: TimeInterval) async throws {
-            lock.withLock { requested.append(delay) }
+            let earlyRelease: Bool = lock.withLock {
+                requested.append(delay)
+                guard pending == nil, outstandingReleases > 0 else { return false }
+                outstandingReleases -= 1
+                return true
+            }
+            if earlyRelease { return }
+
             try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
                     var resumeNow: (any Error)?
@@ -82,7 +94,17 @@ final class CleanupSchedulerTests: TempHomeTestCase {
         }
 
         /// Lets one pending sleep return so the scheduler fires.
-        func release() { wake(with: nil) }
+        func release() {
+            let continuation: (CheckedContinuation<Void, any Error>)? = lock.withLock {
+                if let current = pending {
+                    pending = nil
+                    return current
+                }
+                outstandingReleases += 1
+                return nil
+            }
+            continuation?.resume(returning: ())
+        }
 
         private func wake(with error: (any Error)?) {
             let continuation: (CheckedContinuation<Void, any Error>)? = lock.withLock {

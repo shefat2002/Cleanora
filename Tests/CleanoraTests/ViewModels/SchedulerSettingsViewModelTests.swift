@@ -67,7 +67,7 @@ final class SchedulerSettingsViewModelTests: XCTestCase {
             locale: VMFixtures.posixLocale,
             timeZone: VMFixtures.gregorianGMT.timeZone
         )
-        XCTAssertEqual(line, "Last scheduled run: September 12, 2026, 10:42 AM")
+        XCTAssertEqual(line, "Last scheduled run: September 12, 2026 at 10:42 AM")
     }
 
     func testNextRunLineNeedsEnabledScheduleAndAPreviousRun() {

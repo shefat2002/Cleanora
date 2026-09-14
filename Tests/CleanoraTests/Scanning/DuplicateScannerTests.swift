@@ -198,13 +198,19 @@ final class DuplicateScannerTests: TempHomeTestCase {
         try write("Projects/Keychains/cache/key-a.dat", bytes: 1_200_000, in: scope)
         try write("Projects/Keychains/cache/key-b.dat", bytes: 1_200_000, in: scope)
         // A legitimate pair in the same scope must still be found.
-        try write("Projects/keep-a.dat", bytes: 1_200_000, in: scope)
-        try write("Projects/keep-b.dat", bytes: 1_200_000, in: scope)
+        let older = Date(timeIntervalSinceNow: -120)
+        let newer = Date(timeIntervalSinceNow: -60)
+        try write("Projects/keep-a.dat", bytes: 1_200_000, modified: older, in: scope)
+        try write("Projects/keep-b.dat", bytes: 1_200_000, modified: newer, in: scope)
 
         let groups = try await find(in: [tempHome, scope])
 
         XCTAssertEqual(groups.count, 1, "blocked subtrees contribute nothing")
-        XCTAssertEqual(groups[0].files.map(\.lastPathComponent), ["keep-a.dat", "keep-b.dat"])
+        XCTAssertEqual(
+            groups[0].files.map(\.lastPathComponent),
+            ["keep-b.dat", "keep-a.dat"], // keeper (newest) first
+            "blocked subtrees contribute nothing"
+        )
     }
 
     // MARK: - Bounds

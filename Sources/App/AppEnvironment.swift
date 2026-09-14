@@ -234,6 +234,24 @@ final class AppEnvironment {
         }
     }
 
+    // MARK: - Main window (M-01)
+
+    /// Opens (or recreates) the main window. The SwiftUI `openWindow` action
+    /// only resolves inside a scene-hosted view, so CleanoraApp captures it
+    /// here at launch; the menu bar popover — hosted outside any scene —
+    /// calls through this seam instead. The AppKit fallback covers the window
+    /// still existing (hidden/minimized).
+    var openMainWindowHandler: (@MainActor () -> Void)?
+
+    func openMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let openMainWindowHandler {
+            openMainWindowHandler()
+        } else if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
     // MARK: - Finder reveal (P-09)
 
     func revealInFinder(_ url: URL) {
@@ -348,14 +366,14 @@ final class AppEnvironment {
     /// executor. Never navigates and never shows a confirmation sheet: a
     /// background run that cannot clean safely just records what it found.
     /// The "Run now" button calls exactly this.
+    ///
+    /// This deliberately does NOT touch `lastScheduledRun`: the schedule slot
+    /// is the loop's to stamp, and a manual run must not consume it (doing so
+    /// would push the next fire back a full interval after a relaunch).
     func runScheduledCleanupNow() async {
         guard !isScheduledRunRunning else { return }
         isScheduledRunRunning = true
         defer { isScheduledRunRunning = false }
-        // Stamp the slot at fire time, before work starts (a crash mid-run
-        // must not cause catch-up bursts on the next launch) — the same
-        // contract CleanupScheduler.fire follows.
-        preferences.update { $0.lastScheduledRun = Date() }
 
         guard let result = await performScan(options: preferences.value.scanOptions) else { return }
         finishScan(result)
@@ -380,12 +398,22 @@ final class AppEnvironment {
     }
 
     /// The clean half of a scheduled run: exactly the selection the
-    /// scheduler marked (safe, non-destructive) through the normal executor,
-    /// so history and reconciliation behave like every other cleanup.
+    /// scheduler marked (safe, non-destructive) through the normal executor.
+    /// Per the scheduler's contract, a run that freed nothing (everything
+    /// gate-refused or already gone) is not worth a history entry.
     func performScheduledClean(_ result: ScanResult) async {
         let items = result.selectedItems
         guard !items.isEmpty else { return }
-        await performCleanup(Self.cleaningRequest(for: items, scanResultID: result.id))
+        let request = Self.cleaningRequest(for: items, scanResultID: result.id)
+        for await event in cleanupExecutor().run(
+            items: request.items,
+            confirmed: request.confirmed,
+            destructiveConfirmed: request.destructiveConfirmed
+        ) {
+            if case .finished(let report) = event, report.bytesFreed > 0 {
+                finishCleanup(report)
+            }
+        }
     }
 
     /// Runs one cleanup to completion and records the report (history +

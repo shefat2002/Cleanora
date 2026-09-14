@@ -116,6 +116,66 @@ final class SafetyPolicyTests: TempHomeTestCase {
         }
     }
 
+    // Uninstaller carve-out (Phase 3): .appLeftovers + .moveToTrash + .review
+    // admits the app bundle under /Applications and leftover files under
+    // home — blocked roots still win.
+    func testAppLeftoversBundleUnderApplicationsAllowed() throws {
+        let bundle = ScanEnvironment.systemApplications
+            .appendingPathComponent("SomeApp.app", isDirectory: true)
+        let item = makeItem(
+            path: bundle, category: .appLeftovers,
+            risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testAppLeftoversUnderHomeAllowed() throws {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Application Support/SomeApp"),
+            category: .appLeftovers, risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertNoThrow(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testAppLeftoversPreferencesPlistStillBlocked() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Preferences/com.someapp.plist"),
+            category: .appLeftovers, risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            XCTAssertEqual(
+                error as? SafetyPolicy.Violation,
+                .blockedPath(policy.canonicalized(
+                    tempHome.appendingPathComponent("Library/Preferences/com.someapp.plist")
+                ).path)
+            )
+        }
+    }
+
+    func testAppLeftoversContainersStillBlocked() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Containers/com.someapp"),
+            category: .appLeftovers, risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testAppLeftoversCarveOutRequiresReviewRisk() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Library/Application Support/SomeApp"),
+            category: .appLeftovers, risk: .safe, deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testAppLeftoversCarveOutOutsideHomeAndApplicationsRejected() {
+        let item = makeItem(
+            path: URL(fileURLWithPath: "/Volumes/External/Apps/SomeApp.app"),
+            category: .appLeftovers, risk: .review, deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
     // I3
     func testBlockedFragmentWinsEvenInsideAllowedRoot() {
         let item = makeItem(path: tempHome.appendingPathComponent("Library/Caches/Mobile Documents/thing"))

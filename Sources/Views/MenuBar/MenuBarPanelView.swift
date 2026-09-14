@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// The menu bar item's windowed panel (M-01): free space, junk estimate,
-/// last-scan / last-clean lines, one Scan action, Open and Quit. Compact by
-/// design — this is a glanceable status, not a second dashboard.
+/// The menu bar item's panel (M-01): free space, junk estimate, last-scan /
+/// last-clean lines, one Scan action, Open and Quit. Compact by design —
+/// this is a glanceable status, not a second dashboard. Hosted by
+/// MenuBarController's NSPopover, which lives OUTSIDE any SwiftUI scene, so
+/// window activation goes through AppEnvironment's captured handler instead
+/// of the `openWindow` environment action (that only resolves scene-hosted).
 struct MenuBarPanelView: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(\.openWindow) private var openMainWindow
     @State private var viewModel: MenuBarPanelViewModel?
 
     var body: some View {
@@ -29,6 +31,7 @@ struct MenuBarPanelView: View {
                     loadLastCleanupDate: {
                         environment.scanHistoryStore.history(limit: 1).first?.date
                     },
+                    openMainWindowAction: { environment.openMainWindow() },
                     startScanAction: { environment.navigation.go(.scan) }
                 )
             }
@@ -69,9 +72,7 @@ struct MenuBarPanelView: View {
             Divider()
 
             Button {
-                viewModel.scanNow {
-                    openMainWindow(id: Self.mainWindowID)
-                }
+                viewModel.scanNow()
             } label: {
                 Label("Scan Mac", systemImage: "magnifyingglass")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -79,7 +80,7 @@ struct MenuBarPanelView: View {
             .accessibilityHint("Opens the main window and starts a scan. Nothing is deleted during a scan.")
 
             Button {
-                openMainWindow(id: Self.mainWindowID)
+                viewModel.openMainWindow()
             } label: {
                 Label("Open Cleanora", systemImage: "macwindow")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -99,7 +100,7 @@ struct MenuBarPanelView: View {
         .padding(Design.spacingM)
     }
 
-    /// Matches WindowGroup(id:) in CleanoraApp so openWindow targets the
-    /// main window from the menu bar scene.
+    /// Matches WindowGroup(id:) in CleanoraApp; the captured openWindow
+    /// handler targets this id.
     static let mainWindowID = "main"
 }

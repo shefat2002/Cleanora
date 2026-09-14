@@ -4,6 +4,11 @@ import XCTest
 /// M-06 — the applications inventory reads .app bundles from the system
 /// (override-injected) and user applications folders only, and inventories
 /// them read-only.
+///
+/// Every test MUST go through `inventory()` — it always injects the
+/// applicationsOverride seam. Calling the scanner with the bare
+/// `environment` would inventory the machine's real /Applications, which is
+/// exactly what the seam exists to prevent.
 final class AppInventoryScannerTests: TempHomeTestCase {
     private let scanner = AppInventoryScanner()
 
@@ -12,6 +17,19 @@ final class AppInventoryScannerTests: TempHomeTestCase {
     }
     private var userApps: URL {
         environment.userApplications
+    }
+
+    /// The ONLY way tests call the scanner: override always injected.
+    private func inventory(environment custom: ScanEnvironment? = nil) -> [InstalledApp] {
+        scanner.inventory(environment: custom ?? environmentWithSystemRoot())
+    }
+
+    private func environmentWithSystemRoot() -> ScanEnvironment {
+        ScanEnvironment(
+            home: tempHome,
+            temporaryRoot: tempRoot,
+            applicationsOverride: systemApps
+        )
     }
 
     @discardableResult
@@ -39,20 +57,12 @@ final class AppInventoryScannerTests: TempHomeTestCase {
         return bundleURL
     }
 
-    private func environmentWithSystemRoot() -> ScanEnvironment {
-        ScanEnvironment(
-            home: tempHome,
-            temporaryRoot: tempRoot,
-            applicationsOverride: systemApps
-        )
-    }
-
     // MARK: - Discovery
 
     func testDiscoversAppBundleInUserApplicationsFolder() throws {
         let bundle = try makeApp("Foo", in: userApps)
 
-        let apps = scanner.inventory(environment: environment)
+        let apps = inventory()
 
         XCTAssertEqual(apps.count, 1)
         let app = try XCTUnwrap(apps.first)
@@ -67,7 +77,7 @@ final class AppInventoryScannerTests: TempHomeTestCase {
         try makeApp("Foo", in: userApps)
         try makeApp("Bar", bundleID: "com.example.bar", in: systemApps)
 
-        let apps = scanner.inventory(environment: environmentWithSystemRoot())
+        let apps = inventory()
 
         XCTAssertEqual(apps.map(\.name), ["Bar", "Foo"], "both roots, sorted by name")
     }
@@ -76,7 +86,7 @@ final class AppInventoryScannerTests: TempHomeTestCase {
         try makeApp("Zebra", in: userApps)
         try makeApp("apple", bundleID: "com.example.apple", in: userApps)
 
-        let apps = scanner.inventory(environment: environment)
+        let apps = inventory()
 
         XCTAssertEqual(apps.map(\.name), ["apple", "Zebra"], "case-insensitive name order")
     }
@@ -84,13 +94,11 @@ final class AppInventoryScannerTests: TempHomeTestCase {
     func testOverlappingRootsAreDeduplicated() throws {
         try makeApp("Foo", in: userApps)
         // The override POINTS at the user folder — the app must appear once.
-        let apps = scanner.inventory(
-            environment: ScanEnvironment(
-                home: tempHome,
-                temporaryRoot: tempRoot,
-                applicationsOverride: userApps
-            )
-        )
+        let apps = inventory(environment: ScanEnvironment(
+            home: tempHome,
+            temporaryRoot: tempRoot,
+            applicationsOverride: userApps
+        ))
 
         XCTAssertEqual(apps.count, 1)
     }
@@ -105,7 +113,7 @@ final class AppInventoryScannerTests: TempHomeTestCase {
             withDestinationURL: userApps.appendingPathComponent("Real.app")
         )
 
-        let apps = scanner.inventory(environment: environment)
+        let apps = inventory()
 
         XCTAssertEqual(apps.map(\.name), ["Real"], "files and .app aliases are not inventory")
     }
@@ -113,7 +121,7 @@ final class AppInventoryScannerTests: TempHomeTestCase {
     func testBundleWithoutInfoPlistStillInventoried() throws {
         let bundle = try makeApp("Widget", bundleID: nil, version: nil, in: userApps)
 
-        let apps = scanner.inventory(environment: environment)
+        let apps = inventory()
 
         XCTAssertEqual(apps.count, 1)
         XCTAssertEqual(apps[0].name, "Widget", "folder name is the fallback")
@@ -123,6 +131,6 @@ final class AppInventoryScannerTests: TempHomeTestCase {
     }
 
     func testMissingRootsYieldEmptyInventory() {
-        XCTAssertTrue(scanner.inventory(environment: environment).isEmpty)
+        XCTAssertTrue(inventory().isEmpty)
     }
 }

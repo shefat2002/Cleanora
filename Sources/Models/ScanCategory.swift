@@ -34,7 +34,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable,
         case .trash: return "trash"
         case .developerData: return "hammer"
         case .largeFiles: return "doc.badge.gearshape"
-        case .appLeftovers: return "app.badge"
+        case .appLeftovers: return "shippingbox.and.arrow.backward"
         }
     }
 

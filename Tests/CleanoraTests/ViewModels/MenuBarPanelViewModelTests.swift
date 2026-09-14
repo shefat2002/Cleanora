@@ -87,11 +87,14 @@ final class MenuBarPanelViewModelTests: XCTestCase {
             VMFixtures.item(name: "a", category: .applicationCaches, size: 10, risk: .safe)
         ])
         var scanned: ScanResult?
+        var didOpenWindow = false
+        var scanRouted = false
         let viewModel = MenuBarPanelViewModel(
             loadLastScan: { scanned },
             loadDiskOverview: { DiskOverview(totalCapacity: 10, availableForImportantUsage: 1_000_000_000) },
             loadLastCleanupDate: { VMFixtures.fixedNow },
-            startScanAction: {}
+            openMainWindowAction: { didOpenWindow = true },
+            startScanAction: { scanRouted = true }
         )
 
         scanned = result
@@ -107,5 +110,15 @@ final class MenuBarPanelViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.lastCleanLine, "Last cleaned: Today, 10:42 AM")
         XCTAssertNotNil(viewModel.freeSpaceLine)
         XCTAssertNotNil(viewModel.lastScanLine)
+
+        // Scan from the panel: the window opens first, then the scan route.
+        viewModel.scanNow()
+        XCTAssertTrue(didOpenWindow)
+        XCTAssertTrue(scanRouted)
+
+        // Plain "Open Cleanora" only activates the window.
+        didOpenWindow = false
+        viewModel.openMainWindow()
+        XCTAssertTrue(didOpenWindow)
     }
 }

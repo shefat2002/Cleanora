@@ -91,23 +91,37 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertNil(store.value.lastScheduledRun)
     }
 
-    // The next persist must write the full current shape (schedule fields
-    // present) so later loads never see the legacy shape again.
+    // The next mutation (any `update`) must write the full current shape
+    // (schedule fields present) so later loads never see the legacy shape
+    // again. Constructing a store alone does not persist — only a write does.
     func testLegacyBlobConvergesToCurrentShapeOnNextPersist() throws {
         let defaults = makeDefaults()
         let legacy = Data("{\"askBeforeDeleting\": false}".utf8)
         defaults.set(legacy, forKey: preferencesKey)
-        _ = PreferencesStore(defaults: defaults)
 
-        let reloaded = PreferencesStore(defaults: defaults)
-        XCTAssertTrue(reloaded.value.scheduleAutoCleanSafeOnly)
+        let store = PreferencesStore(defaults: defaults)
+        XCTAssertFalse(store.value.scheduleEnabled, "legacy blob: schedule defaulted off")
+        XCTAssertTrue(store.value.askBeforeDeleting == false, "legacy value preserved")
+
+        let runDate = Date(timeIntervalSinceReferenceDate: 900_000_000)
+        store.update {
+            $0.scheduleEnabled = true
+            $0.lastScheduledRun = runDate
+        }
 
         let raw = try XCTUnwrap(defaults.data(forKey: preferencesKey))
         let object = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: raw) as? [String: Any]
         )
-        XCTAssertNotNil(object["scheduleEnabled"])
+        XCTAssertEqual(object["scheduleEnabled"] as? Bool, true)
         XCTAssertNotNil(object["scheduleIntervalDays"])
         XCTAssertNotNil(object["scheduleAutoCleanSafeOnly"])
+        XCTAssertNotNil(object["lastScheduledRun"])
+
+        // The converged file loads back with every field intact.
+        let reloaded = PreferencesStore(defaults: defaults)
+        XCTAssertTrue(reloaded.value.scheduleEnabled)
+        XCTAssertTrue(reloaded.value.askBeforeDeleting == false)
+        XCTAssertEqual(reloaded.value.lastScheduledRun, runDate)
     }
 }

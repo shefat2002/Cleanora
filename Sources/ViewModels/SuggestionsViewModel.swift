@@ -55,9 +55,10 @@ final class SuggestionsViewModel {
 
     /// VoiceOver summary for one row.
     nonisolated static func rowAccessibilityLabel(for recommendation: Recommendation) -> String {
-        "\(recommendation.title). \(recommendation.detail). " +
+        "\(recommendation.title). \(recommendation.category.displayName). " +
+            "\(recommendation.detail) " +
             "\(recommendation.estimatedBytes.formattedByteCount) estimated. " +
-            "Review highlights this category in the results."
+            "Review highlights this category in the results; nothing is selected."
     }
 }
 

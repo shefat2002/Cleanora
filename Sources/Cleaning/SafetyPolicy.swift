@@ -23,6 +23,8 @@ public struct SafetyPolicy: Sendable {
     private let blockedPathFragments: [String]
     /// Canonicalized home — base for the large-files carve-out below.
     private let homePath: String
+    /// Canonicalized /Applications — base for the uninstaller carve-out.
+    private let systemApplicationsPath: String
 
     public init(
         home: URL,
@@ -36,6 +38,7 @@ public struct SafetyPolicy: Sendable {
         self.blockedPaths = blockedPaths.map { Self.canonicalized($0).path }
         self.blockedPathFragments = blockedPathFragments
         self.homePath = Self.canonicalized(home).path
+        self.systemApplicationsPath = Self.canonicalized(ScanEnvironment.systemApplications).path
     }
 
     public static func standard(home: URL, tempRoot: URL) -> SafetyPolicy {
@@ -124,6 +127,19 @@ public struct SafetyPolicy: Sendable {
         return URL(fileURLWithPath: standardized)
     }
 
+    /// ~/Library/Containers — permanent-invariant forbidden territory
+    /// (Docker decision). Never deletable through any carve-out.
+    private func underContainers(_ path: String) -> Bool {
+        let containers = Self.canonicalized(
+            homeAsURL.appendingPathComponent("Library/Containers", isDirectory: true)
+        ).path
+        return path == containers || path.hasPrefix(containers + "/")
+    }
+
+    private var homeAsURL: URL {
+        URL(fileURLWithPath: homePath, isDirectory: true)
+    }
+
     public func validate(
         _ item: CleanupItem,
         confirmed: Set<UUID>,
@@ -143,21 +159,38 @@ public struct SafetyPolicy: Sendable {
         if excludedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             throw Violation.blockedPath(path)
         }
-        // Large-files carve-out: spec §7 puts large files in "Review" — the
-        // USER decides, file by file. They live anywhere in the home, which
-        // no fixed allowlist can cover, so instead of silently dropping them
-        // at cleanup time the gate admits them under ALL of these conditions:
-        // category .largeFiles, recoverable .moveToTrash, .review risk (never
-        // auto-selected), inside the home, and still subject to every check
-        // below (blocked paths, fragments, symlink leaves, selection,
-        // confirmation). Anything else outside the allowlist stays rejected.
+        // Review carve-outs: spec §7 puts large files and uninstaller
+        // leftovers in "Review" — the USER decides, item by item. They live
+        // outside any fixed allowlist, so the gate admits them under ALL of
+        // these conditions: the matching category, recoverable .moveToTrash,
+        // .review risk (never auto-selected), inside the carve-out's base
+        // (home for large files; home or the system /Applications root for
+        // uninstaller leftovers), and still subject to every check below
+        // (blocked paths, fragments, symlink leaves, selection, confirmation).
+        // Blocked roots always win: Preferences plists and — permanently —
+        // ~/Library/Containers/** stay refused even for .appLeftovers.
+        // Anything else outside the allowlist stays rejected.
         let inAllowedRoot = allowedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") })
+        let underHome = path == homePath || path.hasPrefix(homePath + "/")
+        let underApplications = path == systemApplicationsPath
+            || path.hasPrefix(systemApplicationsPath + "/")
         let largeFileCarveOut = item.category == .largeFiles
             && item.deletionMethod == .moveToTrash
             && item.riskLevel == .review
-            && (path == homePath || path.hasPrefix(homePath + "/"))
-        if !inAllowedRoot && !largeFileCarveOut {
+            && underHome
+        let appLeftoversCarveOut = item.category == .appLeftovers
+            && item.deletionMethod == .moveToTrash
+            && item.riskLevel == .review
+            && (underHome || underApplications)
+            && !underContainers(path)
+        if !inAllowedRoot && !largeFileCarveOut && !appLeftoversCarveOut {
             throw Violation.outsideAllowedRoots(path)
+        }
+        // Belt-and-braces for the carve-outs: a .appLeftovers item INSIDE an
+        // allowed root but under ~/Library/Containers is still refused —
+        // Containers are permanent-invariant forbidden (Docker decision).
+        if appLeftoversCarveOut && inAllowedRoot && underContainers(path) {
+            throw Violation.blockedPath(path)
         }
         if blockedPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             throw Violation.blockedPath(path)
