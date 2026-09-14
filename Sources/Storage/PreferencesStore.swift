@@ -7,6 +7,8 @@ struct Preferences: Equatable, Codable, Sendable {
     var launchAtLogin: Bool = false
     var showCleanupReminder: Bool = false
     var confirmBeforeCleaning: Bool = true
+    /// M-01: keeps the menu bar item alive when the main window closes.
+    var menuBarEnabled: Bool = false
 
     // Scan
     var enabledCategories: Set<ScanCategory> = Set(ScanCategory.phaseOne)
@@ -17,11 +19,80 @@ struct Preferences: Equatable, Codable, Sendable {
     var automaticallyCleanSafeItems: Bool = false
     var keepCleanupHistory: Bool = true
 
+    // Scheduled cleanup (M-02). A scheduled run may only ever clean the
+    // preselected (`.safe`) non-destructive set — scheduleAutoCleanSafeOnly
+    // cannot widen that; it only decides whether the clean runs unattended
+    // at all or the scheduled scan just records "scan finished".
+    var scheduleEnabled: Bool = false
+    var scheduleIntervalDays: Int = 7
+    var scheduleAutoCleanSafeOnly: Bool = true
+    /// The last schedule slot that FIRED (set at fire time, before the scan
+    /// runs, so a crash mid-run cannot turn the next launch into a burst of
+    /// catch-ups). Drives the next fire: lastScheduledRun + interval.
+    var lastScheduledRun: Date?
+
+    /// Accepted interval range, in days. Stored values are clamped here on
+    /// use — never rewritten — so a hand-edited or future blob can't break
+    /// scheduling.
+    static let scheduleIntervalDaysRange = 1...30
+    static let secondsPerDay: TimeInterval = 86_400
+
+    var clampedScheduleIntervalDays: Int {
+        min(
+            max(scheduleIntervalDays, Self.scheduleIntervalDaysRange.lowerBound),
+            Self.scheduleIntervalDaysRange.upperBound
+        )
+    }
+
+    var scheduleInterval: TimeInterval {
+        TimeInterval(clampedScheduleIntervalDays) * Self.secondsPerDay
+    }
+
     var scanOptions: ScanOptions {
         var options = ScanOptions()
         options.enabledCategories = enabledCategories
         options.includeDeveloperData = includeDeveloperData
         return options
+    }
+
+    /// Keeps the default-values construction (`Preferences()`) available —
+    /// the custom `init(from:)` below suppresses the synthesized memberwise
+    /// initializer.
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case launchAtLogin, showCleanupReminder, confirmBeforeCleaning, menuBarEnabled
+        case enabledCategories, includeDeveloperData
+        case askBeforeDeleting, automaticallyCleanSafeItems, keepCleanupHistory
+        case scheduleEnabled, scheduleIntervalDays, scheduleAutoCleanSafeOnly
+        case lastScheduledRun
+    }
+
+    /// Tolerant decode: every field falls back to its default when the key
+    /// is absent. Synthesized decoding would throw `keyNotFound` for any new
+    /// field missing from an older build's blob — landing in the corrupt-blob
+    /// reset path and silently wiping the user's settings on upgrade.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        showCleanupReminder = try container.decodeIfPresent(Bool.self, forKey: .showCleanupReminder) ?? false
+        confirmBeforeCleaning = try container.decodeIfPresent(Bool.self, forKey: .confirmBeforeCleaning) ?? true
+        menuBarEnabled = try container.decodeIfPresent(Bool.self, forKey: .menuBarEnabled) ?? false
+        enabledCategories = try container.decodeIfPresent(
+            Set<ScanCategory>.self, forKey: .enabledCategories
+        ) ?? Set(ScanCategory.phaseOne)
+        includeDeveloperData = try container.decodeIfPresent(Bool.self, forKey: .includeDeveloperData) ?? false
+        askBeforeDeleting = try container.decodeIfPresent(Bool.self, forKey: .askBeforeDeleting) ?? true
+        automaticallyCleanSafeItems = try container.decodeIfPresent(
+            Bool.self, forKey: .automaticallyCleanSafeItems
+        ) ?? false
+        keepCleanupHistory = try container.decodeIfPresent(Bool.self, forKey: .keepCleanupHistory) ?? true
+        scheduleEnabled = try container.decodeIfPresent(Bool.self, forKey: .scheduleEnabled) ?? false
+        scheduleIntervalDays = try container.decodeIfPresent(Int.self, forKey: .scheduleIntervalDays) ?? 7
+        scheduleAutoCleanSafeOnly = try container.decodeIfPresent(
+            Bool.self, forKey: .scheduleAutoCleanSafeOnly
+        ) ?? true
+        lastScheduledRun = try container.decodeIfPresent(Date.self, forKey: .lastScheduledRun)
     }
 }
 

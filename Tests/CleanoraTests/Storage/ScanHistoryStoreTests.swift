@@ -296,6 +296,52 @@ final class ScanHistoryStoreTests: TempHomeTestCase {
         XCTAssertNil(makeStore().lastScan())
     }
 
+    // MARK: - Scheduled cleanup (M-02)
+
+    // Scheduled runs write the same entry shape as interactive runs (the
+    // schema stays at 1): an entry built from a small report must round-trip
+    // through the file, Clear History, and a re-append untouched.
+    func testScheduledStyleEntryFromReportRoundTripsThroughClearAndAppend() {
+        let store = makeStore()
+        let item = CleanupItem(
+            name: "Scheduled App Cache",
+            category: .applicationCaches,
+            path: URL(fileURLWithPath: "/tmp/cleanora-scheduled/cache"),
+            size: 4096,
+            riskLevel: .safe,
+            reason: "test",
+            deletionMethod: .removeContents
+        )
+        let report = CleanupReport(
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            finishedAt: Date(timeIntervalSince1970: 1_005),
+            outcomes: [
+                ItemOutcome(
+                    itemID: item.id, name: item.name, category: item.category,
+                    path: item.path.path, status: .removed, bytesFreed: 4096
+                ),
+            ],
+            freeSpaceBefore: nil,
+            freeSpaceAfter: nil,
+            scanResultID: UUID()
+        )
+        let entry = CleanupHistoryEntry(from: report, appVersion: "0.1.0")
+
+        store.appendHistory(entry)
+        XCTAssertEqual(store.history(), [entry])
+        XCTAssertEqual(
+            store.history().first?.schemaVersion, CleanupHistoryEntry.schemaVersion
+        )
+
+        store.clearHistory()
+        XCTAssertTrue(store.history().isEmpty)
+
+        store.appendHistory(entry)
+        XCTAssertEqual(store.history(), [entry])
+        XCTAssertEqual(store.history().first?.bytesFreed, 4096)
+        XCTAssertEqual(store.history().first?.categoryTotals.first?.category, .applicationCaches)
+    }
+
     // MARK: - Day grouping (History UI)
 
     func testHistoryGroupedByDayNewestDayFirstEntriesNewestFirst() {
