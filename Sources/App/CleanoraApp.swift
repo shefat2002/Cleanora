@@ -4,13 +4,14 @@ import SwiftUI
 struct CleanoraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var environment = AppEnvironment()
-    @State private var menuBarController = MenuBarController()
 
     // body is split into builder properties: the scenes + modifiers in one
     // expression exceeded the type checker's budget. The menu bar item is
     // NOT a scene — SceneBuilder's buildIf + MenuBarExtra crashes this
     // toolchain's type checker, so MenuBarController (NSStatusItem + popover)
-    // owns its appearance instead.
+    // owns its appearance instead. It lives in AppEnvironment so the toggle
+    // works from Settings even when the main window is CLOSED (the Settings
+    // scene survives; MainSceneRoot's onChange does not).
     var body: some Scene {
         mainScene
         settingsScene
@@ -18,7 +19,7 @@ struct CleanoraApp: App {
 
     private var mainScene: some Scene {
         WindowGroup(id: MenuBarPanelView.mainWindowID) {
-            MainSceneRoot(appDelegate: appDelegate, menuBarController: menuBarController)
+            MainSceneRoot(appDelegate: appDelegate)
                 .environment(environment)
                 .frame(minWidth: 720, minHeight: 520)
                 .frame(width: 900, height: 620)
@@ -35,31 +36,23 @@ struct CleanoraApp: App {
 }
 
 /// WindowGroup content (a real View, so `openWindow` resolves here): hands
-/// the environment to the app delegate and the menu bar controller, captures
-/// the window-opening action for scene-less surfaces (the popover), and
-/// starts the schedule loop when the preference asks for it.
+/// the environment its app delegate + window-opening action, applies the
+/// menu-bar and schedule preferences once at launch, and starts the schedule
+/// loop when the preference asks for it.
 private struct MainSceneRoot: View {
     let appDelegate: AppDelegate
-    let menuBarController: MenuBarController
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openWindow) private var openMainWindow
 
     var body: some View {
         RootView()
             .task {
+                environment.appDelegate = appDelegate
                 environment.openMainWindowHandler = {
                     openMainWindow(id: MenuBarPanelView.mainWindowID)
                 }
-                appDelegate.isMenuBarEnabled = environment.preferences.value.menuBarEnabled
-                menuBarController.update(
-                    enabled: environment.preferences.value.menuBarEnabled,
-                    environment: environment
-                )
+                environment.applyMenuBarPreference()
                 environment.applySchedulePreference()
-            }
-            .onChange(of: environment.preferences.value.menuBarEnabled) { _, enabled in
-                appDelegate.isMenuBarEnabled = enabled
-                menuBarController.update(enabled: enabled, environment: environment)
             }
     }
 }

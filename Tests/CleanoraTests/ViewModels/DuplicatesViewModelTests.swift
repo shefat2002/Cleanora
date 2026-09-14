@@ -234,8 +234,8 @@ final class DuplicatesViewModelTests: XCTestCase {
 
     func testProgressAccumulatesMonotonically() async {
         let viewModel = makeViewModel(find: { _, _, onProgress in
-            onProgress(10, 1)
-            onProgress(4, 0)
+            onProgress(DuplicateProgress(filesExamined: 10, bytesExamined: 0, duplicateGroupsFound: 1))
+            onProgress(DuplicateProgress(filesExamined: 4, bytesExamined: 0, duplicateGroupsFound: 0))
             return []
         })
         viewModel.addScope(url("scope"))

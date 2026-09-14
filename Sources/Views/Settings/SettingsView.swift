@@ -68,6 +68,11 @@ struct SettingsView: View {
         .onChange(of: environment.preferences.value.scheduleEnabled) { _, _ in
             environment.applySchedulePreference()
         }
+        .onChange(of: environment.preferences.value.menuBarEnabled) { _, _ in
+            // Applied HERE, not only in the main window's scene: the Settings
+            // scene stays alive after the window closes (menu-bar-only mode).
+            environment.applyMenuBarPreference()
+        }
         .task {
             if startupItemsViewModel == nil {
                 startupItemsViewModel = StartupItemsViewModel(environment: environment)

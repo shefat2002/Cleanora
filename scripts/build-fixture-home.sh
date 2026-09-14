@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the CLEANORA_FIXTURE_HOME QA fixture (Phase 1 + Phase 2 developer trees).
+# Build the CLEANORA_FIXTURE_HOME QA fixture (Phase 1 + 2 trees + Phase 3 extras).
 #
 #   ./scripts/build-fixture-home.sh [DEST]
 #
@@ -10,6 +10,18 @@
 #
 # Nothing outside DEST is written. Staleness stamps go on AFTER content is
 # created so directory mtimes stay old (Log/Temp scanner gates).
+#
+# Phase 3 extras:
+#   - DuplicateScope/: two byte-identical 1.2 MB files (one duplicate group,
+#     newest = keeper) plus a same-size control file that must never group.
+#     Duplicate scanning is strictly opt-in — the user picks the scope in the
+#     Duplicates screen — so these files are never scanned automatically;
+#     point the scope at DuplicateScope for the hand check.
+#   - Applications/Fixture Editor.app with planner-visible related files:
+#     cache + Application Support + saved state validate at cleanup, while
+#     the Preferences plist and the Containers folder are REFUSED by the
+#     safety gate (both are listed anyway so the refusal can be hand-verified
+#     in the cleanup results).
 #
 # NOTE on the large file: Projects/big-video.bin is ~600 KB on purpose — it is
 # BELOW the default 500,000,000-byte large-file threshold, so it must NOT
@@ -43,10 +55,18 @@ mkdir -p \
   "$FX/.npm/_logs" \
   "$FX/.yarn/berry/cache" \
   "$FX/Library/Containers/com.docker.docker/Data/vms/0/data" \
+  "$FX/Library/Containers/com.fixture.editor/Data" \
+  "$FX/Library/Caches/com.fixture.editor" \
+  "$FX/Library/Preferences" \
+  "$FX/Library/Saved Application State/com.fixture.editor.savedState" \
+  "$FX/Applications/Fixture Editor.app/Contents/MacOS" \
   "$FX/Projects" \
   "$FX/.Trash" \
   "$FX/tmp/stale-temp-dir" \
-  "$FX/tmp/shared"
+  "$FX/tmp/shared" \
+  "$FX/DuplicateScope/Project A" \
+  "$FX/DuplicateScope/Project B" \
+  "$FX/Library/Application Support/Fixture Editor"
 
 # --- Phase 1: caches, logs, trash, temp -----------------------------------
 echo payload > "$FX/Library/Caches/com.apple.Safari/WebsiteCaches/pagecache.dat"
@@ -86,6 +106,49 @@ dd if=/dev/zero of="$FX/Library/Containers/com.docker.docker/Data/vms/0/data/Doc
 # Home-rooted large file: 600 KB — deliberately BELOW the default
 # 500,000,000-byte threshold (see header note).
 head -c 614400 /dev/zero > "$FX/Projects/big-video.bin"
+
+# --- Phase 3: duplicate finder scope ----------------------------------------
+# Two byte-identical files > 1 MB (the engine's 1 MB floor): exactly one
+# duplicate group, keeper = the NEWEST file. unique.dat is the same size with
+# different content — it must never group. Scope is user-picked in the UI
+# (Duplicates screen → add DuplicateScope); automatic scans ignore this tree.
+head -c 1200000 /dev/zero > "$FX/DuplicateScope/Project A/report.dat"
+head -c 1200000 /dev/zero > "$FX/DuplicateScope/Project B/report-copy.dat"
+head -c 1200000 /dev/urandom > "$FX/DuplicateScope/unique.dat"
+# Keeper order is mtime-driven: Project B's copy is newer → the keeper.
+touch -t 202609010900 "$FX/DuplicateScope/Project A/report.dat"
+touch -t 202609130900 "$FX/DuplicateScope/Project B/report-copy.dat"
+
+# --- Phase 3: fixture app for the uninstaller -------------------------------
+# A minimal bundle (real Info.plist so the inventory reads the bundle ID) and
+# the planner-visible related files. Preferences + Containers are planned but
+# gate-REFUSED at cleanup — that refusal rendering is a manual gate check.
+cat > "$FX/Applications/Fixture Editor.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.fixture.editor</string>
+  <key>CFBundleName</key><string>Fixture Editor</string>
+  <key>CFBundleExecutable</key><string>Fixture Editor</string>
+  <key>CFBundleShortVersionString</key><string>1.2.3</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+</dict>
+</plist>
+PLIST
+echo '#!/bin/sh' > "$FX/Applications/Fixture Editor.app/Contents/MacOS/Fixture Editor"
+chmod +x "$FX/Applications/Fixture Editor.app/Contents/MacOS/Fixture Editor"
+head -c 2048 /dev/zero > "$FX/Library/Caches/com.fixture.editor/cache.bin"
+cat > "$FX/Library/Preferences/com.fixture.editor.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict><key>lastUsed</key><date>2026-09-01T09:00:00Z</date></dict>
+</plist>
+PLIST
+echo data > "$FX/Library/Application Support/Fixture Editor/data.db"
+echo state > "$FX/Library/Saved Application State/com.fixture.editor.savedState/window.data"
+echo container > "$FX/Library/Containers/com.fixture.editor/Data/container.dat"
 
 # --- Staleness stamps ------------------------------------------------------
 # > 7 days  → log candidates

@@ -48,13 +48,14 @@ final class DuplicatesViewModel {
         var selection: TriStateSelection { DuplicatesViewModel.selectionState(of: rows) }
     }
 
-    /// Engine seam: the exact frozen DuplicateScanner call, injected so tests
-    /// never hash real files. `onProgress` reports (files examined, groups
-    /// found so far).
+    /// Engine seam: the exact DuplicateScanner call, injected so tests never
+    /// hash real files. `onProgress` carries the engine's full progress
+    /// struct, including the truncation flag (a budget/cap-cut walk must not
+    /// be reported as a definitive "no duplicates").
     typealias FindDuplicates = @Sendable (
         _ scope: [URL],
         _ options: DuplicateOptions,
-        _ onProgress: @escaping @Sendable (_ filesExamined: Int, _ groupsFound: Int) -> Void
+        _ onProgress: @escaping @Sendable (DuplicateProgress) -> Void
     ) async throws -> [DuplicateGroup]
 
     /// Bounds for the duplicate hunt: the engine's 1 MB floor plus a wider
@@ -71,6 +72,9 @@ final class DuplicatesViewModel {
     private(set) var cards: [DuplicateCard] = []
     private(set) var filesExamined = 0
     private(set) var groupsFound = 0
+    /// Set when the engine reports the walk was cut short (candidate cap or
+    /// time budget) — the UI must then hedge its "no duplicates" copy.
+    private(set) var isTruncated = false
 
     var isScanning: Bool { phase == .scanning }
     var canScan: Bool { !scope.isEmpty && !isScanning }
@@ -115,9 +119,7 @@ final class DuplicatesViewModel {
                     in: scope,
                     options: options,
                     environment: scanEnvironment,
-                    onProgress: { progress in
-                        onProgress(progress.filesExamined, progress.duplicateGroupsFound)
-                    }
+                    onProgress: onProgress
                 )
             },
             pickFolder: { picker.pickDirectory() }
@@ -158,12 +160,13 @@ final class DuplicatesViewModel {
         cards = []
         filesExamined = 0
         groupsFound = 0
+        isTruncated = false
         let scope = self.scope
         let options = Self.scanOptions
         task = Task { [weak self, findDuplicates = self.findDuplicates, fileSize = self.fileSize, modificationDate = self.modificationDate] in
-            let progress: @Sendable (Int, Int) -> Void = { examined, groups in
+            let progress: @Sendable (DuplicateProgress) -> Void = { update in
                 Task { @MainActor in
-                    self?.applyProgress(examined: examined, groups: groups)
+                    self?.applyProgress(update)
                 }
             }
             guard let self else { return }
@@ -194,11 +197,12 @@ final class DuplicatesViewModel {
         task?.cancel()
     }
 
-    private func applyProgress(examined: Int, groups: Int) {
+    private func applyProgress(_ progress: DuplicateProgress) {
         // Progress hops through a Task and may arrive out of order — clamp so
-        // the counters never run backwards.
-        filesExamined = max(filesExamined, examined)
-        groupsFound = max(groupsFound, groups)
+        // the counters never run backwards. Truncation only ever latches ON.
+        filesExamined = max(filesExamined, progress.filesExamined)
+        groupsFound = max(groupsFound, progress.duplicateGroupsFound)
+        isTruncated = isTruncated || progress.truncated
     }
 
     // MARK: - Selection

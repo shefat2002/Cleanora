@@ -43,6 +43,12 @@ struct UninstallerView: View {
         .sheet(isPresented: $confirmSheetVisible) {
             if let viewModel {
                 ConfirmCleanSheet(selection: viewModel) { request in
+                    // Re-probe: the sheet may have been open while the app
+                    // was launched. A flipped gate aborts the request.
+                    guard viewModel.uninstallAllowedAfterRevalidation() else {
+                        confirmSheetVisible = false
+                        return
+                    }
                     environment.beginCleaning(request)
                     environment.navigation.go(.cleaning)
                 }
@@ -252,6 +258,12 @@ struct UninstallerView: View {
             Text("Nothing is selected automatically. Review each row first.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            // Stated as fact, up front, without pre-labeling rows: the safety
+            // gate owns the refusal and says so per item after a clean.
+            Text("App Containers and preference plists are protected — Cleanora lists them, but the safety gate will refuse to remove them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if viewModel.isLoadingLeftovers {
                 ProgressView()
@@ -324,9 +336,11 @@ struct UninstallerView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// Same confirmation gate as Results and Developer Cleanup.
+    /// Same confirmation gate as Results and Developer Cleanup. The running
+    /// gate is re-probed on every attempt AND again when the sheet confirms —
+    /// the app may have been launched between selection and this click.
     private func uninstall(_ viewModel: UninstallerViewModel) {
-        guard viewModel.canUninstall else { return }
+        guard viewModel.uninstallAllowedAfterRevalidation() else { return }
         if CleaningFlowPolicy.requiresConfirmation(
             confirmBeforeCleaning: environment.preferences.value.confirmBeforeCleaning,
             askBeforeDeleting: environment.preferences.value.askBeforeDeleting,
@@ -334,6 +348,7 @@ struct UninstallerView: View {
         ) {
             confirmSheetVisible = true
         } else {
+            guard viewModel.uninstallAllowedAfterRevalidation() else { return }
             environment.beginCleaning(AppEnvironment.cleaningRequest(
                 for: viewModel.selectedItems,
                 scanResultID: viewModel.sourceScanID

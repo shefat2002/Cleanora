@@ -95,10 +95,12 @@ struct CleaningView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if let refusal = CleaningViewModel.refusalLine(for: row) {
+                            // Safety-gate refusals render in full — the gate's
+                            // reason is the user's only honest answer for why
+                            // a protected item stayed.
                             Text(refusal)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

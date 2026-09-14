@@ -22,18 +22,18 @@ final class UninstallerViewModel {
     private(set) var leftovers: [CleanupItem] = []
     private(set) var isLoadingLeftovers = false
 
-    /// Bundle IDs currently running, refreshed when an app is selected.
-    private(set) var runningBundleIDs: Set<String> = []
+    /// Running-gate result for the selected app. Refreshed on select AND on
+    /// every uninstall attempt (reviewer finding: a select-time snapshot goes
+    /// stale — launch the app after selecting, and the old gate would trash
+    /// a running bundle).
+    private(set) var selectedAppRunning = false
 
     var searchText = "" {
         didSet { filteredApps = Self.filteredApps(apps, matching: searchText) }
     }
 
     var isEmpty: Bool { apps.isEmpty && !isLoadingInventory }
-    var isAppRunning: Bool {
-        guard let bundleID = selectedApp?.bundleID, !bundleID.isEmpty else { return false }
-        return runningBundleIDs.contains(bundleID)
-    }
+    var isAppRunning: Bool { selectedAppRunning }
     var uninstallDisabledReason: String? {
         guard selectedApp != nil else { return nil }
         guard !isAppRunning else { return "Quit \(selectedApp?.name ?? "the app") first" }
@@ -52,16 +52,17 @@ final class UninstallerViewModel {
     private let sessionID = UUID()
     private let loadInventory: @MainActor () async throws -> [InstalledApp]
     private let planLeftovers: @MainActor (InstalledApp) async throws -> [CleanupItem]
-    private let isBundleIDRunning: @MainActor (String) -> Bool
+    /// Fresh probe per call — never a cached snapshot.
+    private let isAppRunningProbe: @MainActor (InstalledApp) -> Bool
 
     init(
         loadInventory: @escaping @MainActor () async throws -> [InstalledApp],
         planLeftovers: @escaping @MainActor (InstalledApp) async throws -> [CleanupItem],
-        isBundleIDRunning: @escaping @MainActor (String) -> Bool
+        isAppRunning: @escaping @MainActor (InstalledApp) -> Bool
     ) {
         self.loadInventory = loadInventory
         self.planLeftovers = planLeftovers
-        self.isBundleIDRunning = isBundleIDRunning
+        self.isAppRunningProbe = isAppRunning
     }
 
     convenience init(environment: AppEnvironment) {
@@ -70,7 +71,7 @@ final class UninstallerViewModel {
             planLeftovers: { app in
                 try await environment.plannedLeftovers(for: app)
             },
-            isBundleIDRunning: { environment.isBundleIDRunning($0) }
+            isAppRunning: { environment.isAppRunning($0) }
         )
     }
 
@@ -93,11 +94,7 @@ final class UninstallerViewModel {
         guard selectedApp != app else { return }
         selectedApp = app
         leftovers = []
-        if let bundleID = app.bundleID, !bundleID.isEmpty, isBundleIDRunning(bundleID) {
-            runningBundleIDs = [bundleID]
-        } else {
-            runningBundleIDs = []
-        }
+        revalidateRunningGate()
         // Third-party leftovers are review rows; nothing is ever preselected,
         // no matter what the planner produced.
         isLoadingLeftovers = true
@@ -119,6 +116,24 @@ final class UninstallerViewModel {
         for index in leftovers.indices where leftovers[index].id == itemID {
             leftovers[index].selected = isSelected
         }
+    }
+
+    /// Fresh running-app probe for the selected app. The View calls this at
+    /// every uninstall attempt — selecting an app and THEN launching it must
+    /// still be caught (M-06 spec: refuse if the app is running).
+    func revalidateRunningGate() {
+        guard let app = selectedApp else {
+            selectedAppRunning = false
+            return
+        }
+        selectedAppRunning = isAppRunningProbe(app)
+    }
+
+    /// The View must call this before building a CleaningRequest; a false
+    /// return means the running gate just flipped (reason text is live).
+    func uninstallAllowedAfterRevalidation() -> Bool {
+        revalidateRunningGate()
+        return canUninstall
     }
 
     // MARK: - Pure logic

@@ -211,6 +211,14 @@ struct DuplicatesView: View {
             ) {
                 viewModel.find()
             }
+        case .finished where viewModel.cards.isEmpty && viewModel.isTruncated:
+            // A truncated walk knows nothing for sure — never state a false
+            // "none found" (reviewer finding 2).
+            EmptyStateView(
+                systemImage: "exclamationmark.triangle",
+                title: "Search hit its limit",
+                message: "The search stopped before finishing, so results are incomplete. Try a smaller folder or run it again."
+            )
         case .finished where viewModel.cards.isEmpty:
             EmptyStateView(
                 systemImage: "checkmark.seal",
@@ -239,6 +247,13 @@ struct DuplicatesView: View {
                         .accessibilityLabel(line)
                 }
                 if viewModel.phase == .finished {
+                    if viewModel.isTruncated {
+                        Text("The search hit its time or size limit — results may be incomplete.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel("The search hit its time or size limit, results may be incomplete")
+                    }
                     summaryLine(viewModel)
                 }
                 ForEach(viewModel.cards) { card in

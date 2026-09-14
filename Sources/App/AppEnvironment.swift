@@ -242,6 +242,26 @@ final class AppEnvironment {
     /// calls through this seam instead. The AppKit fallback covers the window
     /// still existing (hidden/minimized).
     var openMainWindowHandler: (@MainActor () -> Void)?
+    /// App-layer lifecycle hook (last-window-close behavior). Weak: the
+    /// delegate is owned by the App struct.
+    weak var appDelegate: AppDelegate?
+    /// M-01 status item + popover. Lives HERE (not in the App struct) so the
+    /// Settings toggle applies even with the main window closed — reviewer
+    /// finding: the window-scoped onChange died with the window.
+    let menuBarController = MenuBarController()
+
+    /// Applies the menu-bar preference to the delegate + status item. Safe to
+    /// call from any surface (launch, main window, Settings).
+    func applyMenuBarPreference() {
+        appDelegate?.isMenuBarEnabled = preferences.value.menuBarEnabled
+        menuBarController.activateMainWindow = { [weak self] in
+            self?.openMainWindow()
+        }
+        menuBarController.update(
+            enabled: preferences.value.menuBarEnabled,
+            environment: self
+        )
+    }
 
     func openMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
@@ -318,10 +338,21 @@ final class AppEnvironment {
         UninstallPlanner.plan(for: app, environment: scanEnvironment)
     }
 
-    /// True when any running process carries this bundle identifier.
-    func isBundleIDRunning(_ bundleID: String) -> Bool {
-        !bundleID.isEmpty
-            && !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    /// True when the app is running: matched by bundle identifier, or — for
+    /// Info.plist-less bundles with no bundle ID — by any running process
+    /// launched from inside the bundle's path. The path fallback closes the
+    /// gate hole where bundleID-nil apps had no running check at all.
+    func isAppRunning(_ app: InstalledApp) -> Bool {
+        if let bundleID = app.bundleID, !bundleID.isEmpty,
+           !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty {
+            return true
+        }
+        let bundlePath = app.url.standardizedFileURL.path
+        return NSWorkspace.shared.runningApplications.contains { process in
+            guard let processBundleURL = process.bundleURL else { return false }
+            let processPath = processBundleURL.standardizedFileURL.path
+            return processPath == bundlePath || processPath.hasPrefix(bundlePath + "/")
+        }
     }
 
     // MARK: - Scheduled cleanup (M-07)
@@ -367,6 +398,10 @@ final class AppEnvironment {
     /// background run that cannot clean safely just records what it found.
     /// The "Run now" button calls exactly this.
     ///
+    /// The selection goes through the scheduler's own policy
+    /// (`scheduledCleanSelection`), so a manual run offers exactly what a
+    /// timed fire would — preselected `.safe`, non-destructive, never Trash.
+    ///
     /// This deliberately does NOT touch `lastScheduledRun`: the schedule slot
     /// is the loop's to stamp, and a manual run must not consume it (doing so
     /// would push the next fire back a full interval after a relaunch).
@@ -378,7 +413,9 @@ final class AppEnvironment {
         guard let result = await performScan(options: preferences.value.scanOptions) else { return }
         finishScan(result)
         guard preferences.value.scheduleAutoCleanSafeOnly else { return }
-        await performScheduledClean(result)
+        let selection = CleanupScheduler.scheduledCleanSelection(in: result)
+        guard !selection.isEmpty else { return }
+        await performScheduledClean(CleanupScheduler.markingSelection(selection, on: result))
     }
 
     /// Runs one full scan to completion; nil when it failed or was cancelled.

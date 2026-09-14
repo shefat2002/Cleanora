@@ -2,16 +2,25 @@ import CryptoKit
 import Foundation
 
 /// Progress for a duplicate scan: files that reached the hashing stage, the
-/// bytes they account for, and the groups found so far.
+/// bytes they account for, and the groups found so far. `truncated` is set
+/// on the FINAL progress when the run hit its candidate cap or time budget —
+/// an empty result on a truncated walk is "unknown", not "none found".
 public struct DuplicateProgress: Sendable, Equatable {
     public let filesExamined: Int
     public let bytesExamined: Int64
     public let duplicateGroupsFound: Int
+    public let truncated: Bool
 
-    public init(filesExamined: Int, bytesExamined: Int64, duplicateGroupsFound: Int) {
+    public init(
+        filesExamined: Int,
+        bytesExamined: Int64,
+        duplicateGroupsFound: Int,
+        truncated: Bool = false
+    ) {
         self.filesExamined = filesExamined
         self.bytesExamined = bytesExamined
         self.duplicateGroupsFound = duplicateGroupsFound
+        self.truncated = truncated
     }
 }
 
@@ -91,12 +100,17 @@ public struct DuplicateScanner: Sendable {
         // short, and a partial result must not depend on dictionary order.
         let candidates = walk.candidates
             .sorted { $0.url.path < $1.url.path }
-            .prefix(max(0, options.fileLimit))
+        let candidateCapHit = candidates.count > options.fileLimit
+        let scopedCandidates = Array(candidates.prefix(max(0, options.fileLimit)))
 
-        var progress = DuplicateProgress(filesExamined: 0, bytesExamined: 0, duplicateGroupsFound: 0)
+        var progressTruncated = walk.hitTimeBudget || candidateCapHit
+        var progress = DuplicateProgress(
+            filesExamined: 0, bytesExamined: 0, duplicateGroupsFound: 0,
+            truncated: progressTruncated
+        )
         var groups: [DuplicateGroup] = []
 
-        let sizeBuckets = Dictionary(grouping: candidates, by: \.size)
+        let sizeBuckets = Dictionary(grouping: scopedCandidates, by: \.size)
         for (size, sameSizeUnsorted) in sizeBuckets.sorted(by: { $0.key < $1.key }) {
             let sameSize = sameSizeUnsorted.sorted { $0.url.path < $1.url.path }
             guard sameSize.count > 1 else { continue }
@@ -104,7 +118,10 @@ public struct DuplicateScanner: Sendable {
             var headBuckets: [Data: [Candidate]] = [:]
             for candidate in sameSize {
                 try Task.checkCancellation()
-                guard Date() < deadline else { return finalize(groups, progress: &progress, onProgress: onProgress) }
+                guard Date() < deadline else {
+                    progressTruncated = true
+                    return finalize(groups, truncated: progressTruncated, progress: &progress, onProgress: onProgress)
+                }
                 guard let digest = digest(of: candidate.url, bytes: min(Self.headHashLength, Int(size)))
                 else { continue }
                 headBuckets[Data(digest), default: []].append(candidate)
@@ -122,8 +139,10 @@ public struct DuplicateScanner: Sendable {
                 var fullBuckets: [Data: [Candidate]] = [:]
                 for candidate in headGroup.sorted(by: { $0.url.path < $1.url.path }) {
                     try Task.checkCancellation()
-                    guard Date() < deadline
-                    else { return finalize(groups, progress: &progress, onProgress: onProgress) }
+                    guard Date() < deadline else {
+                        progressTruncated = true
+                        return finalize(groups, truncated: progressTruncated, progress: &progress, onProgress: onProgress)
+                    }
                     guard let digest = digest(of: candidate.url, bytes: nil) else { continue }
                     fullBuckets[Data(digest), default: []].append(candidate)
                 }
@@ -151,7 +170,7 @@ public struct DuplicateScanner: Sendable {
             }
         }
 
-        return finalize(groups, progress: &progress, onProgress: onProgress)
+        return finalize(groups, truncated: progressTruncated || Date() >= deadline, progress: &progress, onProgress: onProgress)
     }
 
     // MARK: - Walk
@@ -264,6 +283,7 @@ public struct DuplicateScanner: Sendable {
     /// stable across runs.
     private func finalize(
         _ groups: [DuplicateGroup],
+        truncated: Bool,
         progress: inout DuplicateProgress,
         onProgress: @escaping @Sendable (DuplicateProgress) -> Void
     ) -> [DuplicateGroup] {
@@ -273,11 +293,12 @@ public struct DuplicateScanner: Sendable {
             }
             return (lhs.files.first?.path ?? "") < (rhs.files.first?.path ?? "")
         }
-        if ordered.count != progress.duplicateGroupsFound {
+        if ordered.count != progress.duplicateGroupsFound || truncated != progress.truncated {
             progress = DuplicateProgress(
                 filesExamined: progress.filesExamined,
                 bytesExamined: progress.bytesExamined,
-                duplicateGroupsFound: ordered.count
+                duplicateGroupsFound: ordered.count,
+                truncated: truncated
             )
             onProgress(progress)
         }

@@ -25,7 +25,10 @@ final class UninstallerViewModelTests: XCTestCase {
         UninstallerViewModel(
             loadInventory: { apps },
             planLeftovers: { app in leftovers(app) },
-            isBundleIDRunning: { running.contains($0) }
+            isAppRunning: { app in
+                guard let bundleID = app.bundleID else { return false }
+                return running.contains(bundleID)
+            }
         )
     }
 
@@ -47,7 +50,7 @@ final class UninstallerViewModelTests: XCTestCase {
         let viewModel = UninstallerViewModel(
             loadInventory: { throw NSError(domain: "test", code: 1) },
             planLeftovers: { _ in [] },
-            isBundleIDRunning: { _ in false }
+            isAppRunning: { _ in false }
         )
         await viewModel.loadInventoryIfNeeded()
         XCTAssertNotNil(viewModel.inventoryError)
@@ -166,6 +169,34 @@ final class UninstallerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedCount, 2)
         XCTAssertFalse(viewModel.requiresDestructiveConfirmation)
     }
+// Reviewer finding: the running gate is re-probed on every uninstall
+    // attempt — launching the app AFTER selecting it must still be caught.
+    func testRunningGateRevalidatedOnEveryUninstallAttempt() async {
+        var running: Set<String> = []
+        let runner = app(name: "Runner", bundleID: "com.example.runner")
+        let viewModel = UninstallerViewModel(
+            loadInventory: { [runner] },
+            planLeftovers: { _ in
+                [VMFixtures.item(
+                    name: "Leftover",
+                    category: .appLeftovers,
+                    size: 10,
+                    risk: .review
+                )]
+            },
+            isAppRunning: { app in running.contains(app.bundleID ?? "") }
+        )
+        await viewModel.loadInventoryIfNeeded()
+        viewModel.select(viewModel.apps[0])
+        _ = await waitUntil { !viewModel.isLoadingLeftovers }
+        viewModel.setSelection(true, itemID: viewModel.leftovers[0].id)
+        XCTAssertTrue(viewModel.canUninstall)
+
+        running.insert("com.example.runner")
+        XCTAssertFalse(viewModel.uninstallAllowedAfterRevalidation())
+        XCTAssertTrue(viewModel.isAppRunning)
+        XCTAssertEqual(viewModel.uninstallDisabledReason, "Quit Runner first")
+    }
 }
 
 private extension UninstallerViewModel {
@@ -174,5 +205,4 @@ private extension UninstallerViewModel {
         for id in itemIDs {
             setSelection(isSelected, itemID: id)
         }
-    }
-}
+    }}
