@@ -235,6 +235,7 @@ final class AppEnvironment {
 
     func finishCleanup(_ report: CleanupReport) {
         lastCleanupReport = report
+        reconcileLastScan(after: report)
         guard preferences.value.keepCleanupHistory else { return }
         // A cleanup that validated everything out (or was cancelled before
         // the first item) has nothing worth remembering.
@@ -242,6 +243,46 @@ final class AppEnvironment {
         scanHistoryStore.appendHistory(
             CleanupHistoryEntry(from: report, appVersion: Self.appVersion)
         )
+    }
+
+    /// Drop items the cleanup actually removed from `lastScanResult`, so the
+    /// dashboard totals and the disk chart stop counting deleted bytes after
+    /// a partial (cancelled/refused) run — reviewer finding 2.
+    private func reconcileLastScan(after report: CleanupReport) {
+        guard var result = lastScanResult else { return }
+        let removedPaths = Set(
+            report.outcomes
+                .filter { $0.status == .removed }
+                .map(\.path)
+        )
+        guard !removedPaths.isEmpty else { return }
+        let keptItems = result.items.filter { !removedPaths.contains($0.path.path) }
+        guard keptItems.count != result.items.count else { return }
+        result = ScanResult(
+            id: result.id,
+            startedAt: result.startedAt,
+            finishedAt: result.finishedAt,
+            items: keptItems,
+            summaries: Self.summaries(for: keptItems),
+            freeSpaceBefore: result.freeSpaceBefore,
+            scannerKeys: result.scannerKeys
+        )
+        lastScanResult = result
+        scanHistoryStore.saveLastScan(result)
+    }
+
+    private static func summaries(for items: [CleanupItem]) -> [CategorySummary] {
+        ScanCategory.scanOrder.compactMap { category in
+            let group = items.filter { $0.category == category }
+            guard !group.isEmpty else { return nil }
+            return CategorySummary(
+                category: category,
+                totalBytes: group.reduce(0) { $0 + $1.size },
+                itemCount: group.count,
+                preselectedBytes: group.filter(\.selected).reduce(0) { $0 + $1.size },
+                reviewBytes: group.filter { !$0.selected }.reduce(0) { $0 + $1.size }
+            )
+        }
     }
 
     static let appVersion: String = {

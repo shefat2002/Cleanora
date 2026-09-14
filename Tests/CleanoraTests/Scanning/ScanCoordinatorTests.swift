@@ -233,6 +233,36 @@ final class ScanCoordinatorTests: TempHomeTestCase {
         XCTAssertEqual(result.summary(for: .browserCaches)?.itemCount, 1)
     }
 
+    // A large-file finding must NOT shadow its enclosing scanner item —
+    // otherwise one big file inside a cache dir makes the whole dir vanish
+    // from the results (reviewer finding 1).
+    func testLargeFileFindingKeepsEnclosingScannerItem() async throws {
+        let cacheDir = environment.caches.appendingPathComponent("com.big/Cache", isDirectory: true)
+        let dirItem = TestItems.item("Cache", under: cacheDir.deletingLastPathComponent(), size: 1000)
+        let bigFile = CleanupItem(
+            name: "big.bin",
+            appName: nil,
+            category: .largeFiles,
+            path: cacheDir.appendingPathComponent("big.bin"),
+            size: 900,
+            riskLevel: .review,
+            reason: "large file",
+            deletionMethod: .moveToTrash
+        )
+        let scanners: [any Cleanora.Scanner] = [
+            MockScanner(category: .browserCaches, result: .produced([dirItem])),
+            MockScanner(category: .largeFiles, result: .produced([bigFile])),
+        ]
+
+        var options = ScanOptions()
+        options.enabledCategories = [.browserCaches, .largeFiles]
+        let result = try finishedResult(await consume(makeCoordinator(scanners, options: options).run()).updates)
+
+        XCTAssertEqual(result.items.count, 2, "both the directory and the file finding survive")
+        XCTAssertTrue(result.items.contains { $0.name == "Cache" }, "enclosing scanner item survives")
+        XCTAssertTrue(result.items.contains { $0.category == .largeFiles })
+    }
+
     func testIdenticalPathsCollapseToFirstProducer() async throws {
         let shared = TestItems.item("Same", under: environment.caches, size: 100)
         let duplicate = CleanupItem(

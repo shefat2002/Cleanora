@@ -33,10 +33,14 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         )
     }
 
-    private func safeItem(name: String = "Cache", bytes: Int64 = 500) -> CleanupItem {
+    private func safeItem(
+        name: String = "Cache",
+        bytes: Int64 = 500,
+        cacheBundle: String = "com.example"
+    ) -> CleanupItem {
         CleanupItem(
             name: name, category: .applicationCaches,
-            path: tempHome.appendingPathComponent("Library/Caches/com.example"),
+            path: tempHome.appendingPathComponent("Library/Caches/\(cacheBundle)"),
             size: bytes, riskLevel: .safe, reason: "test",
             deletionMethod: .trashDirectory
         )
@@ -349,5 +353,45 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         XCTAssertEqual(request.confirmed, Set([a.id, b.id]), "I5: every item is explicitly confirmed")
         XCTAssertFalse(request.destructiveConfirmed, "only set by the sheet for destructive selections")
         XCTAssertEqual(request.selectedBytes, 350)
+    }
+
+    // MARK: Reviewer finding 2 — lastScanResult reconciles after a partial clean
+
+    func testFinishCleanupDropsRemovedItemsFromLastScan() {
+        let env = makeEnvironment()
+        let removed = safeItem(name: "Removed", bytes: 500, cacheBundle: "com.removed")
+        let survivor = safeItem(name: "Survivor", bytes: 250, cacheBundle: "com.survivor")
+        env.finishScan(makeResult(items: [removed, survivor]))
+
+        let report = CleanupReport(
+            startedAt: Date(), finishedAt: Date(),
+            outcomes: [ItemOutcome(
+                itemID: removed.id, name: removed.name, category: removed.category,
+                path: removed.path.path, status: .removed, bytesFreed: 500
+            )],
+            freeSpaceBefore: nil, freeSpaceAfter: nil, scanResultID: nil
+        )
+        env.finishCleanup(report)
+
+        let result = env.lastScanResult
+        XCTAssertEqual(result?.items.map(\.name), ["Survivor"], "deleted items stop counting")
+        XCTAssertEqual(env.scanHistoryStore.lastScan()?.items.map(\.name), ["Survivor"])
+    }
+
+    func testFinishCleanupKeepsLastScanUntouchedWhenNothingRemoved() {
+        let env = makeEnvironment()
+        env.finishScan(makeResult(items: [safeItem(name: "A", bytes: 100)]))
+
+        let report = CleanupReport(
+            startedAt: Date(), finishedAt: Date(),
+            outcomes: [ItemOutcome(
+                itemID: UUID(), name: "A", category: .applicationCaches,
+                path: "/nowhere", status: .failed, bytesFreed: 0
+            )],
+            freeSpaceBefore: nil, freeSpaceAfter: nil, scanResultID: nil
+        )
+        env.finishCleanup(report)
+
+        XCTAssertEqual(env.lastScanResult?.items.count, 1)
     }
 }

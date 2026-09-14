@@ -53,8 +53,8 @@ make verify        # layering check → xcodegen generate → build → full tes
 ./scripts/check-layering.sh   # engine layers must stay UI-free; must exit 0
 ```
 
-Last recorded gate run: **231 tests, 0 failures, 4.84 s** (`make verify` exit 0 in 10.4 s,
-`check-layering: OK`). All 231 tests must pass before a phase gate.
+Last recorded gate run (2026-09-14): **362 tests, 0 failures, 6.15 s** (`make verify` exit 0 in
+10.6 s, `check-layering: OK`). All 362 tests must pass before a phase gate.
 
 ### Fixture home (`CLEANORA_FIXTURE_HOME`)
 
@@ -63,37 +63,24 @@ All QA that touches the filesystem runs against a throwaway fixture home — nev
 temp root, Application Support, history, cleanup logs) at the fixture directory when the
 environment variable is set (DEBUG builds only).
 
-Build the fixture:
+Build the fixture (writes only under the fixture directory):
 
 ```bash
-FX=/tmp/cleanora-fixture-home
-rm -rf "$FX"
-mkdir -p "$FX/Library/Caches/com.apple.Safari/WebsiteCaches" \
-         "$FX/Library/Caches/com.google.Chrome/Default/Cache" \
-         "$FX/Library/Caches/com.example.app" \
-         "$FX/Library/Logs/old-app-logs" \
-         "$FX/Library/Logs/DiagnosticReports" \
-         "$FX/Library/Application Support/CrashReporter" \
-         "$FX/.Trash" "$FX/tmp/stale-temp-dir"
+./scripts/build-fixture-home.sh                 # default: /tmp/cleanora-fixture-home
+./scripts/build-fixture-home.sh /tmp/other-fx   # custom destination
+```
 
-echo payload > "$FX/Library/Caches/com.apple.Safari/WebsiteCaches/pagecache.dat"
-head -c 4096 /dev/zero > "$FX/Library/Caches/com.google.Chrome/Default/Cache/data_1"
-head -c 2048 /dev/zero > "$FX/Library/Caches/com.example.app/thumbs.cache"
-echo old > "$FX/Library/Logs/old-app-logs/session.log"
-echo old > "$FX/Library/Logs/DiagnosticReports/Cleanora-2026-09-01.crash"
-echo old > "$FX/Library/Application Support/CrashReporter/oldreport.ips"
-echo trashed > "$FX/.Trash/discarded-file.txt"
-head -c 8192 /dev/zero > "$FX/tmp/stale-temp-dir/scratch.bin"
-echo stale > "$FX/tmp/stale-temp-file.tmp"
-echo fresh > "$FX/tmp/fresh-work.tmp"
-echo fresh > "$FX/Library/Logs/fresh-app.log"
+The script lays out the Phase 1 trees plus the Phase 2 developer-tool trees
+(Xcode, CoreSimulator, Homebrew, npm, pip, Yarn, Docker) and a home-rooted
+`Projects/big-video.bin` (~600 KB — deliberately BELOW the default 500,000,000-byte
+large-file threshold, so it must NOT appear under Large Files; large-file
+discovery, blocked-root pruning, depth cap, symlink and budget behavior is pinned by
+`LargeFileScannerTests` instead, and the threshold is not lowered in app code). To
+hand-test the Large Files UI, add a sparse above-threshold file to the fixture (no
+real disk cost on APFS):
 
-# Staleness stamps go on AFTER content is created, so directory mtimes stay old.
-touch -t 202609010900 "$FX/Library/Logs/old-app-logs" "$FX/Library/Logs/old-app-logs/session.log" \
-  "$FX/Library/Logs/DiagnosticReports/Cleanora-2026-09-01.crash" \
-  "$FX/Library/Application Support/CrashReporter/oldreport.ips"        # > 7 days → log candidates
-touch -t 202609100900 "$FX/tmp/stale-temp-dir" "$FX/tmp/stale-temp-dir/scratch.bin" \
-  "$FX/tmp/stale-temp-file.tmp"                                        # > 24 h → temp candidates
+```bash
+dd if=/dev/zero of=/tmp/cleanora-fixture-home/Projects/huge.bin bs=1 count=0 seek=600000000
 ```
 
 Layout and what each scanner should report:
@@ -104,10 +91,38 @@ Layout and what each scanner should report:
 | `Library/Caches/com.example.app` | ApplicationCacheScanner | `.safe`, trash |
 | `Library/Caches/com.apple.Safari` | App/Browser scanners | `.review` (override + whole-directory) |
 | `Library/Caches/Google/Chrome/Default/Cache` | BrowserCacheScanner | `.safe` chromium profile cache |
+| `Library/Caches/com.docker.docker` | ApplicationCacheScanner | `.review` (Docker override) |
 | `Library/Logs/old-app-logs`, old loose files, DiagnosticReports, CrashReporter | LogScanner | `.safe`, only entries > 7 days |
 | `Library/Logs/fresh-app.log` | LogScanner | excluded (fresh) |
 | `tmp/stale-temp-*` | TempScanner | `.safe`, only entries > 24 h |
 | `tmp/fresh-work.tmp` | TempScanner | excluded (fresh) |
+| `Library/Developer/Xcode/DerivedData` | XcodeScanner | `.safe`, trash — per-root row |
+| `Library/Developer/Xcode/Archives/App 9-12-26.xcarchive` | XcodeScanner | `.review`, trash — per-root row |
+| `Library/Developer/Xcode/iOS DeviceSupport/16.4 arm64` | XcodeScanner | `.review`, trash — per-root row |
+| `Library/Developer/CoreSimulator/Caches` | XcodeScanner | `.safe`, removeContents — per-root row |
+| `Library/Caches/Homebrew/{api,downloads}` | HomebrewScanner | `.safe`, removeContents |
+| `.npm/_cacache`, `.npm/_logs` | NpmScanner | two `.safe` items, removeContents |
+| `Library/Caches/pip` (+ `.cache/pip` XDG) | PipScanner | `.safe`, removeContents per present root |
+| `Library/Caches/Yarn`, `.yarn/berry/cache` | YarnScanner | `.safe`, removeContents per present root |
+| `Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw` | DockerScanner | measured READ-ONLY; its path is never an item path |
+| `Library/Containers/com.docker.docker/Data` (marker) | DockerScanner | one `.review` INFORMATIONAL item that the cleanup gate must reject |
+| `Projects/big-video.bin` (600 KB) | LargeFileScanner | excluded — below the 500 MB default threshold |
+
+Expected developer-scan outcomes in fixture mode (Settings → Developer Data ON):
+
+- All four Xcode root rows complete and yield items; Archives and iOS DeviceSupport
+  are `.review` (unchecked), DerivedData and CoreSimulator Caches are `.safe`.
+- Homebrew, npm, pip, Yarn report `.safe` items for every present root; Docker emits
+  the informational review row for `…/com.docker.docker/Data` (Docker.raw exists).
+  Absent tools report `.skipped(.toolNotInstalled)` instead of failing the scan.
+- Known dedup overlap (expected, not a bug): the Homebrew/pip/Yarn roots live inside
+  the `Library/Caches` allowlist, so ApplicationCacheScanner produces items for the
+  same paths. The coordinator's dedup collapses identical paths to the FIRST producer
+  (phase-one scanners run before developer ones), so those three roots surface once,
+  under **Application Caches** with the recoverable trash method; their developer
+  twins are dropped. Only paths outside `Library/Caches` (Xcode roots,
+  CoreSimulator, `.npm/*`, `.cache/pip`, `.yarn/*`) group under Developer Data.
+  Either producer cleans the data; the bytes are not double counted.
 
 Run the app against the fixture — launch the **binary directly** (not `open`) so the
 environment variable reaches the process:
@@ -120,15 +135,63 @@ CLEANORA_FIXTURE_HOME=/tmp/cleanora-fixture-home \
   /tmp/cleanora-dd-qa/Build/Products/Debug/Cleanora.app/Contents/MacOS/Cleanora
 ```
 
+Fixture runs store preferences in the `com.cleanora.fixture` suite (not the real
+`com.cleanora` domain). To boot with Developer Data ON, seed that suite with a
+Preferences blob (a JSON-encoded `Preferences` struct) before launch:
+
+```bash
+cat > /tmp/qa-prefs.json <<'EOF'
+{"askBeforeDeleting":true,"automaticallyCleanSafeItems":false,"confirmBeforeCleaning":true,
+ "enabledCategories":["applicationCaches","browserCaches","temporaryFiles","logs","trash",
+ "developerData","largeFiles"],
+ "includeDeveloperData":true,"keepCleanupHistory":true,"launchAtLogin":false,
+ "showCleanupReminder":false}
+EOF
+defaults delete com.cleanora.fixture 2>/dev/null
+defaults write com.cleanora.fixture "com.cleanora.preferences.v1" \
+  -data "$(xxd -p -c 100000 /tmp/qa-prefs.json | tr -d '\n')"
+```
+
+A recorded fixture-mode run (2026-09-14): app boots, stays alive 10 s at ~0 % CPU,
+`SIGTERM` exits cleanly (code 143), nothing written outside the fixture home, no
+crash reports, and the seeded fixture prefs decode with
+`includeDeveloperData = true`.
+
 Safety notes on fixture mode:
 
 - File-based state (history, last scan, write-ahead cleanup logs) is written under
   `FIXTURE_HOME/Library/Application Support/Cleanora`, not the real home.
 - `ScanEnvironment.live()` fatal-errors if the fixture path does not exist or is a bare
   root (`/`), so the seam cannot silently re-aim the allowlist at real system paths.
-- Caveat: preferences persist through `UserDefaults.standard`, so fixture runs still write
-  the app's own `com.cleanora` preference domain (`~/Library/Preferences`). Harmless — it is
-  the app's own settings — but it is not fixture-local.
+- Preferences are fixture-scoped too: with `CLEANORA_FIXTURE_HOME` set, `AppEnvironment`
+  routes `PreferencesStore` at the `com.cleanora.fixture` defaults suite
+  (`~/Library/Preferences/com.cleanora.fixture.plist`), so the real `com.cleanora`
+  domain is never written. Verified: a fixture-mode run leaves no `com.cleanora.plist`.
+
+### Automated coverage map (Phase 2)
+
+Exact test cases covering each Phase 2 behavior:
+
+| Behavior | Test cases |
+|---|---|
+| Xcode per-root rows + risks (`DerivedData`/CoreSimulator safe, Archives/DeviceSupport review) | `XcodeScannerTests.testProducesOneItemPerPresentXcodeRoot`, `testRowKeysExposeExactlyTheFourRoots`, `testCompletedRowsCarryPerRowTotals`, `testEmptyRootsProduceNoItems` |
+| Tool-absent skips (`.toolNotInstalled`) | `ToolCacheScannerTests.testHomebrewAbsentIsSkippedAsToolNotInstalled`, `testNpmAbsentIsSkippedAsToolNotInstalled`, `testPipAbsentIsSkippedAsToolNotInstalled`, `testYarnAbsentIsSkippedAsToolNotInstalled`; `DeveloperScannerTests.testAllToolsAbsentProducesEmptyOutcomeWithPerRowSkips`; `XcodeScannerTests.testAbsentRootsAreSkippedPerRowWithoutFailingTheScanner`, `testMixedPresenceSkipsOnlyAbsentRows`; `DockerScannerTests.testNeitherRawDiskNorCLIMeansToolNotInstalled` |
+| Docker gate rejection pin (marker never deletable, Docker.raw never a path) | `DockerScannerTests.testInformationalItemIsRejectedByTheSafetyGate`, `testRawDiskPathIsNeverAnItemPath`, `testNonAllowlistedDockerPathsNeverBecomeItems`; `DeveloperCleanupViewModelTests.testContainersMarkerRowIsNotSelectable`, `testGroupSelectionSkipsInformationalRows` |
+| Large files (blocked pruning / budget / symlink / depth / sort) | `LargeFileScannerTests.testBlockedRootsAndFragmentsAreExcluded`, `testExhaustedBudgetWithoutFindingsYieldsTooLargeToScan`, `testFindingsBeforeBudgetExhaustionSurvive`, `testSymlinksAreNeverFollowedOrCounted`, `testDepthBeyondFourIsNotScanned`, `testFindsLargeFilesSortedDescending`, `testLimitKeepsOnlyTheLargestFiles`, `testThresholdAboveEveryFileSizeProducesNothing`; gate carve-out: `SafetyPolicyTests.testLargeFileUnderArbitraryHomePathAllowedWithCarveOut`, `testLargeFileCarveOutStillRespectsBlockedPaths`, `testLargeFileCarveOutRequiresMoveToTrash`, `testNonLargeFileOutsideAllowlistStillRejected` |
+| History migration v0→current + trim 150→100 | `ScanHistoryStoreTests.testMigrateHookUpgradesV0EntryToCurrentVersion`, `testMigrateHookLeavesCurrentVersionEntryUnchanged`, `testMigrateHookDropsFutureVersionEntry`, `testPersistedV0EntryReadMigratedAndConvergesOnNextAppend`, `testAppending150EntriesTrimsToMaxHistoryEntriesKeepingNewest`, `testHistoryTrimmedToOneHundredNewestKept`, `testHistoryLimitParameter` |
+| Clear history | `ScanHistoryStoreTests.testClearHistoryRemovesAllEntriesButKeepsLastScan`, `testClearHistoryEmptiesDayGrouping`, `testClearHistoryThenAppendStartsFresh`, `testClearHistoryWithoutHistoryFileIsHarmless`; `HistoryViewModelTests.testClearHistoryDeletesAndRefreshesWhenCapabilityInjected`, `testClearIsHiddenAndNoOpWhenStoreLacksTheCapability`, `testClearHistoryRoutesToStoreAndKeepsLastScan` |
+| Auto-clean fallback paths (trash selected → loud fallback) | `CleaningFlowPolicyTests.testAutoCleanWithTrashPresentFallsBackLoudly`, `testAutoCleanWithNothingPreselectedFallsBackLoudly`, `testAutoCleanFallbackReasonsAreNonEmpty`; `AppEnvironmentFlowTests.testScanDidFinishFallsBackLoudlyWhenTrashIsSelected`, `testScanDidFinishFallsBackWhenNothingWasPreselected` |
+| Destructive always confirms | `CleaningFlowPolicyTests.testDestructiveSelectionAlwaysConfirmsEvenWithBothTogglesOff`, `testDestructiveConfirmationLevelFlagAlsoCounts`; `SafetyPolicyTests.testDestructiveRequiresExplicitConfirm`, `testTrashCategoryWithoutDestructiveMarkingRejected` |
+| Reconciliation after a cancelled run | `AppEnvironmentFlowTests.testCancelledCleanupMarksResultsForReconciliationOnce`; `ResultsViewModelTests.testReconciliationDropsMissingFilesAndCountsThem`, `testReconcilingInitDropsGoneFilesAndReportsTheCount`, `testReconciliationWithEverythingPresentIsIdentity`, `testCancelledRunBannerCopy`; `CleanupExecutorTests.testCancellationBetweenItemsLeavesRemainderUntouched` |
+| Launch-at-login error surface | `AppEnvironmentFlowTests.testLaunchAtLoginSuccessPersistsPreferenceAndStatus`, `testLaunchAtLoginFailureKeepsPreferenceAndSurfacesError`, `testDisableAtLoginUnregistersOnSuccess`; `SettingsViewModelTests.testLaunchAtLoginStatusDescribesSuccess`, `testLaunchAtLoginStatusSurfacesTheServiceManagementError` |
+| Settings wiring (developer gate → engine) | `AppEnvironmentFlowTests.testResolvedOptionsMirrorDeveloperGateIntoCategories`, `testResolvedOptionsAlwaysScanLargeFiles`, `testResolvedOptionsLeavePhaseOneCategoriesUntouched`, `testScanViewModelExpandsDeveloperFanOutProgressRows`, `testScanViewModelCollapsesFanOutRowsWhenDeveloperModeOff`; `ScannerCatalog` gating pinned in `DeveloperScannerTests.testFullScannersExtendsPhaseOneWithDeveloperAndLargeFiles`, `testCoordinatorRunSurfacesDeveloperItems` |
+
+Flows with **no** automated coverage (verified by hand — see the checklist below): the
+end-to-end UI round trip (dashboard → scan progress rows → results grouping → confirm
+sheet → completion), trash-first visual ordering in the confirm sheet, the disk chart's
+rendered segments against a real scan, launch-at-login against real ServiceManagement
+(only the seam outcomes are unit-tested), FDA-denied banner (needs a real TCC denial),
+and the fixture-mode app boot itself.
 
 ### Manual QA checklist (Phase 1 gate — UI flows, run against the fixture home)
 
@@ -161,3 +224,34 @@ Automated suites cover the engine and view-model logic; the following end-to-end
    needs a real TCC denial.
 10. **Settings persistence (§11)** — toggle a scanner off and a cleaning option, relaunch,
     confirm the toggles stuck; the last enabled category cannot be switched off.
+
+### Manual QA checklist additions (Phase 2 gate — fixture home, developer prefs seeded)
+
+11. **Developer scan on/off** — Settings: Developer Data OFF → the progress screen shows
+    exactly one explained `Developer Data` skipped row (no per-tool rows); ON → the row
+    list fans out to Developer Data + 4 Xcode root rows + Homebrew, npm, pip, Yarn,
+    Docker (16 progress rows with phase one), and every row reaches completed or an
+    explained skip.
+12. **Developer results grouping** — Developer Data groups by tool family; Xcode
+    Archives and iOS DeviceSupport rows are `.review` (unchecked by default);
+    DerivedData, CoreSimulator Caches and the package-manager caches are preselected;
+    Homebrew/pip/Yarn roots appear under Application Caches (dedup overlap — expected,
+    see the fixture table above), while Xcode/CoreSimulator/`.npm`/`.yarn`/`.cache`
+    paths appear under Developer Data.
+13. **Docker row behavior** — the informational `Docker build cache` review row (sized
+    from Docker.raw, 4 MiB in the fixture) is NOT selectable; selecting the rest of its
+    group must not select it; cleaning a developer selection never touches
+    `…/com.docker.docker/Data`.
+14. **Large-file selection + confirm** — add the sparse >threshold file (command in the
+    fixture section), rescan: the file appears under Large Files, unchecked, as a plain
+    file row (no app grouping); selecting it demands the normal confirm; cleaning moves
+    it to the fixture `.Trash` (recoverable). `Projects/big-video.bin` (600 KB) must
+    NOT be listed.
+15. **Clear history** — with at least one history entry, Clear History empties the
+    history screen, keeps the dashboard's last-scan line, and a following clean starts
+    a fresh history file
+    (`FIXTURE_HOME/Library/Application Support/Cleanora/history.json`).
+16. **Launch-at-login (dev builds)** — toggling Launch at Login shows a status line on
+    the row; in dev/ad-hoc builds where ServiceManagement registration fails, the
+    failure copy appears instead and the toggle keeps its persisted value — never a
+    silent dead toggle.

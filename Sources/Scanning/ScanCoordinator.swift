@@ -224,16 +224,21 @@ public struct ScanCoordinator: Sendable {
         }
 
         var kept: [Entry] = []
-        var keptPaths: [String] = []
         for entry in deepestFirst {
             // An ancestor (or duplicate) of an already-kept, deeper item is
-            // fully covered by it — drop it.
-            let isCovered = keptPaths.contains { keptPath in
-                keptPath == entry.path || keptPath.hasPrefix(entry.path + "/")
+            // fully covered by it — drop it. EXCEPTION: large-file findings
+            // are single-file informational items (category .largeFiles);
+            // they must not shadow their enclosing scanner item, or a whole
+            // cache directory would vanish from the results because one file
+            // inside it crossed the size threshold. If both end up selected,
+            // the executor resolves the overlap honestly (the dir removal
+            // takes the file; the file item reports already-gone → skipped).
+            let coveringKept = kept.first { keptEntry in
+                let keptPath = keptEntry.path
+                return keptPath == entry.path || keptPath.hasPrefix(entry.path + "/")
             }
-            guard !isCovered else { continue }
+            if let coveringKept, coveringKept.item.category != .largeFiles { continue }
             kept.append(entry)
-            keptPaths.append(entry.path)
         }
         return kept.sorted { $0.index < $1.index }.map(\.item)
     }

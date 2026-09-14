@@ -92,6 +92,30 @@ final class SafetyPolicyTests: TempHomeTestCase {
         XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
     }
 
+    // Carve-out pins (reviewer finding 6): a future "simplification" must
+    // not silently widen the large-files carve-out.
+    func testLargeFileCarveOutRequiresReviewRisk() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Projects/big.bin"),
+            category: .largeFiles, risk: .safe,
+            deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id]))
+    }
+
+    func testLargeFileCarveOutStillRequiresDestructiveConfirmWhenMarkedDestructive() {
+        let item = makeItem(
+            path: tempHome.appendingPathComponent("Projects/big.bin"),
+            category: .largeFiles, risk: .review,
+            confirmation: .destructive, deletionMethod: .moveToTrash
+        )
+        XCTAssertThrowsError(try policy.validate(item, confirmed: [item.id])) { error in
+            guard case SafetyPolicy.Violation.destructiveWithoutExplicitConfirm = error else {
+                return XCTFail("expected destructiveWithoutExplicitConfirm, got \(error)")
+            }
+        }
+    }
+
     // I3
     func testBlockedFragmentWinsEvenInsideAllowedRoot() {
         let item = makeItem(path: tempHome.appendingPathComponent("Library/Caches/Mobile Documents/thing"))
