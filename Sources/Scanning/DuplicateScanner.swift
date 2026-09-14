@@ -293,7 +293,10 @@ public struct DuplicateScanner: Sendable {
             }
             return (lhs.files.first?.path ?? "") < (rhs.files.first?.path ?? "")
         }
-        if ordered.count != progress.duplicateGroupsFound || truncated != progress.truncated {
+        // Always emit a final event when truncated: consumers key their
+        // "results may be incomplete" hedge off this flag, and a truncated
+        // run with zero groups still has to say so.
+        if ordered.count != progress.duplicateGroupsFound || truncated != progress.truncated || truncated {
             progress = DuplicateProgress(
                 filesExamined: progress.filesExamined,
                 bytesExamined: progress.bytesExamined,

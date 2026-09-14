@@ -242,6 +242,47 @@ final class DuplicateScannerTests: TempHomeTestCase {
         XCTAssertTrue(groups.isEmpty, "an exhausted budget yields a partial (empty) result")
     }
 
+    // QA gap 2: truncation must be SURFACED, not silent — a cut-short walk
+    // is "unknown", never a definitive "none found".
+    func testExpiredBudgetSurfacesTruncatedFlag() async throws {
+        try write("one.dat", bytes: 1_200_000, in: scope)
+        try write("two.dat", bytes: 1_200_000, in: scope)
+
+        let box = ProgressBox()
+        _ = try await find(
+            in: [scope], options: DuplicateOptions(timeBudget: 0),
+            onProgress: { box.record($0) }
+        )
+        let progress = try XCTUnwrap(box.latest, "a final progress event must be emitted")
+        XCTAssertTrue(progress.truncated, "budget expiry must set the truncation flag")
+    }
+
+    func testCandidateCapSurfacesTruncatedFlag() async throws {
+        try write("one.dat", bytes: 1_200_000, in: scope)
+        try write("two.dat", bytes: 1_200_000, in: scope)
+
+        let box = ProgressBox()
+        _ = try await find(
+            in: [scope],
+            options: DuplicateOptions(minimumFileSize: 1_000_000, fileLimit: 1, timeBudget: 60),
+            onProgress: { box.record($0) }
+        )
+        XCTAssertTrue(box.sawTruncated, "a candidate-capped walk must report truncation")
+    }
+
+    /// Lock-based progress sink: onProgress escapes to @Sendable contexts.
+    private final class ProgressBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _latest: DuplicateProgress?
+
+        var latest: DuplicateProgress? { lock.withLock { _latest } }
+        var sawTruncated: Bool { lock.withLock { _latest?.truncated == true } }
+
+        func record(_ progress: DuplicateProgress) {
+            lock.withLock { _latest = progress }
+        }
+    }
+
     // MARK: - Cancellation
 
     func testCancellationBeforeStartThrows() async throws {

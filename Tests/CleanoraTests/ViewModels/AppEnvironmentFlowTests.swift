@@ -394,4 +394,28 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
 
         XCTAssertEqual(env.lastScanResult?.items.count, 1)
     }
+
+    // MARK: QA gap 1 — Run-now must not consume the schedule slot
+
+    func testRunNowPerformsSafeCleanButNeverStampsLastScheduledRun() async {
+        let env = makeEnvironment()
+        env.preferences.update {
+            $0.automaticallyCleanSafeItems = false
+            $0.scheduleEnabled = true
+            $0.scheduleAutoCleanSafeOnly = true
+        }
+        // Real cache content so the clean actually frees bytes.
+        let cacheDir = tempHome.appendingPathComponent("Library/Caches/com.example.app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        try? Data(repeating: 1, count: 4096).write(to: cacheDir.appendingPathComponent("blob.bin"))
+
+        await env.runScheduledCleanupNow()
+
+        XCTAssertNil(
+            env.preferences.value.lastScheduledRun,
+            "the schedule slot belongs to the timed loop — Run-now must not consume it"
+        )
+        XCTAssertNotNil(env.lastScanResult)
+        XCTAssertNotNil(env.lastCleanupReport, "safe-only selection produced a real clean")
+    }
 }
