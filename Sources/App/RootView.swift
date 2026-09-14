@@ -16,6 +16,8 @@ struct RootView: View {
             case .completion: CompletionView().transition(.opacity)
             case .history: HistoryView().transition(.opacity)
             case .developer: DeveloperCleanupView().transition(.opacity)
+            case .duplicates: DuplicatesView().transition(.opacity)
+            case .uninstaller: UninstallerView().transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: environment.navigation.route)

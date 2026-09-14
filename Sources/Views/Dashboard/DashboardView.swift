@@ -6,6 +6,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var viewModel: DashboardViewModel?
+    @State private var suggestions: SuggestionsViewModel?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,13 +24,37 @@ struct DashboardView: View {
             if viewModel == nil {
                 viewModel = DashboardViewModel(environment: environment)
             }
+            if suggestions == nil {
+                suggestions = SuggestionsViewModel(environment: environment)
+            }
             viewModel?.refresh()
+            suggestions?.refresh()
         }
     }
 
     private var header: some View {
         HStack(spacing: Design.spacingM) {
             Spacer()
+            Button {
+                environment.navigation.go(.duplicates)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .help("Duplicate finder")
+            .accessibilityLabel("Duplicate finder")
+            .accessibilityHint("Finds duplicate files in folders you choose. Nothing is scanned until you add a folder.")
+
+            Button {
+                environment.navigation.go(.uninstaller)
+            } label: {
+                Image(systemName: "minus.app")
+            }
+            .buttonStyle(.borderless)
+            .help("Uninstaller")
+            .accessibilityLabel("Uninstaller")
+            .accessibilityHint("Lists installed apps and their leftover files.")
+
             Button {
                 environment.navigation.go(.developer)
             } label: {
@@ -128,6 +153,19 @@ struct DashboardView: View {
                             for: overview,
                             scan: viewModel.lastScan
                         )
+                    )
+                    .frame(maxWidth: Design.narrowColumnWidth)
+                }
+
+                if let suggestions, !suggestions.isEmpty {
+                    SuggestionsCardView(
+                        recommendations: suggestions.recommendations,
+                        onReview: { recommendation in
+                            environment.navigation.go(
+                                .results,
+                                highlighting: recommendation.category
+                            )
+                        }
                     )
                     .frame(maxWidth: Design.narrowColumnWidth)
                 }

@@ -3,6 +3,9 @@ import SwiftUI
 /// Sticky footer of the Results screen: instant totals plus the single
 /// primary action. "Clean Now" enables only when something is selected.
 struct SelectionSummaryBar: View {
+    /// Action copy; the uninstaller screen says "Uninstall", the duplicate
+    /// finder "Move to Trash", everything else keeps "Clean Now".
+    var title: String = "Clean Now"
     let selectedBytes: Int64
     let selectedCount: Int
     let canClean: Bool
@@ -24,7 +27,7 @@ struct SelectionSummaryBar: View {
             Spacer(minLength: Design.spacingS)
 
             PrimaryActionButton(
-                title: "Clean Now",
+                title: title,
                 systemImage: "sparkles",
                 hint: canClean
                     ? "Shows what will be removed before anything is deleted."

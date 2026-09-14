@@ -89,10 +89,19 @@ struct CleaningView: View {
             ForEach(viewModel.checklist, id: \.item.id) { row in
                 HStack(spacing: Design.spacingM) {
                     CleaningStateSymbol(row: row)
-                    Text(row.item.name)
-                        .font(.body)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.item.name)
+                            .font(.body)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if let refusal = CleaningViewModel.refusalLine(for: row) {
+                            Text(refusal)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     Spacer(minLength: Design.spacingS)
                     if let outcome = row.outcome, outcome.bytesFreed > 0 {
                         Text(outcome.bytesFreed.formattedByteCount)

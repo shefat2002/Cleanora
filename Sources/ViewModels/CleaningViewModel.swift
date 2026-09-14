@@ -141,7 +141,26 @@ final class CleaningViewModel {
             }
             return "Failed"
         case .skipped:
+            // The safety gate's refusal reason (protected path, outside the
+            // allowed roots…) is spoken too — a bare "Skipped" hides why.
+            if let message = outcome.message, !message.isEmpty {
+                return "Not removed: \(message)"
+            }
             return "Skipped"
+        }
+    }
+
+    /// Visible refusal line for skipped/failed rows (Phase 3: Container
+    /// refusals from the uninstaller, out-of-scope duplicates). nil when
+    /// there is nothing honest to add.
+    nonisolated static func refusalLine(for row: ChecklistRow) -> String? {
+        guard let outcome = row.outcome else { return nil }
+        switch outcome.status {
+        case .failed, .skipped:
+            guard let message = outcome.message, !message.isEmpty else { return nil }
+            return message
+        case .removed, .partial:
+            return nil
         }
     }
 }

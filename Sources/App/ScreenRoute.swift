@@ -9,4 +9,6 @@ enum ScreenRoute: Hashable {
     case completion
     case history
     case developer
+    case duplicates   // Phase 3 (M-04)
+    case uninstaller  // Phase 3 (M-06)
 }

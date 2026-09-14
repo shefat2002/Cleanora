@@ -61,19 +61,35 @@ final class AppEnvironment {
     /// Launch-at-login row status (P-15): success copy or the ServiceManagement
     /// error, so a failed registration is loud instead of a dead toggle.
     private(set) var loginItemStatusMessage: String?
+    /// M-07: a "Run now"/scheduled run is executing; Settings disables the
+    /// button while this is true.
+    private(set) var isScheduledRunRunning = false
 
     private let appDirectories: AppDirectories
     private let permissionProbe: PermissionProbe
     private let loginItem: LoginItemController
     private let fileRevealer: FileRevealer
+    let folderPicker: FolderPicker
+    let startupItems: StartupItemsController
     private var cachedHistoryStore: ScanHistoryStore?
+    /// Cached duplicate-finder state (M-04). Route navigation rebuilds
+    /// screens, and a duplicate hunt is expensive — the view model (scope,
+    /// results, selection) survives the round trip through cleaning. Its
+    /// closures capture value copies, not this environment, so caching it
+    /// here creates no retain cycle.
+    private(set) var duplicatesViewModel: DuplicatesViewModel?
+    /// Set when cleaning was confirmed from the duplicate screen; its next
+    /// appearance reconciles results against `lastCleanupReport`.
+    private(set) var duplicatesNeedReconciliation = false
 
     init(
         preferences: PreferencesStore? = nil,
         scanEnvironment: ScanEnvironment = .live(),
         permissionProbe: PermissionProbe? = nil,
         loginItem: LoginItemController? = nil,
-        fileRevealer: FileRevealer? = nil
+        fileRevealer: FileRevealer? = nil,
+        folderPicker: FolderPicker? = nil,
+        startupItems: StartupItemsController? = nil
     ) {
         // Fixture mode must not write the user's real preference domain —
         // scope defaults to a fixture-named suite there. An explicitly passed
@@ -92,6 +108,8 @@ final class AppEnvironment {
         self.permissionProbe = permissionProbe ?? .live(environment: scanEnvironment)
         self.loginItem = loginItem ?? .live()
         self.fileRevealer = fileRevealer ?? .live()
+        self.folderPicker = folderPicker ?? .live()
+        self.startupItems = startupItems ?? .live()
     }
 
     // MARK: - Engines (the only construction sites in the app)
@@ -220,6 +238,168 @@ final class AppEnvironment {
 
     func revealInFinder(_ url: URL) {
         fileRevealer.reveal(url)
+    }
+
+    // MARK: - Duplicate finder (M-04)
+
+    /// The single construction site for the duplicate-finder view model.
+    func duplicatesFinder() -> DuplicatesViewModel {
+        if let duplicatesViewModel { return duplicatesViewModel }
+        let fresh = DuplicatesViewModel(environment: self)
+        duplicatesViewModel = fresh
+        return fresh
+    }
+
+    /// Called when a cleanup was confirmed from the duplicate screen.
+    func markDuplicatesForReconciliation() {
+        duplicatesNeedReconciliation = true
+    }
+
+    /// Consumed exactly once by the duplicate screen when it reappears after
+    /// a cleaning run.
+    func takeDuplicatesReconciliation() -> Bool {
+        let needed = duplicatesNeedReconciliation
+        duplicatesNeedReconciliation = false
+        return needed
+    }
+
+    /// Runs the frozen DuplicateScanner contract over the user's opt-in
+    /// scope. The scan environment is handed through so blocked subtrees are
+    /// pruned even when the scope contains home. The only construction site;
+    /// the view model injects this method and tests replace it wholesale.
+    func findDuplicates(
+        scope: [URL],
+        options: DuplicateOptions,
+        onProgress: @escaping @Sendable (_ filesExamined: Int, _ groupsFound: Int) -> Void
+    ) async throws -> [DuplicateGroup] {
+        try await DuplicateScanner().findDuplicates(
+            in: scope,
+            options: options,
+            environment: scanEnvironment,
+            onProgress: { progress in
+                onProgress(progress.filesExamined, progress.duplicateGroupsFound)
+            }
+        )
+    }
+
+    func pickFolder() -> URL? {
+        folderPicker.pickDirectory()
+    }
+
+    // MARK: - App uninstaller (M-06)
+
+    /// The installed-app inventory; async so the view can load it off the
+    /// first frame without blocking body evaluation.
+    func appInventory() async throws -> [InstalledApp] {
+        AppInventoryScanner().inventory(environment: scanEnvironment)
+    }
+
+    /// Planned related files for one app, straight from the planner — the UI
+    /// never invents deletion targets.
+    func plannedLeftovers(for app: InstalledApp) async throws -> [CleanupItem] {
+        UninstallPlanner.plan(for: app, environment: scanEnvironment)
+    }
+
+    /// True when any running process carries this bundle identifier.
+    func isBundleIDRunning(_ bundleID: String) -> Bool {
+        !bundleID.isEmpty
+            && !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    }
+
+    // MARK: - Scheduled cleanup (M-07)
+
+    /// The schedule loop, wired to this environment's engines. The closures
+    /// are @Sendable, so `self` crosses the boundary inside an unsafe box —
+    /// every access below hops back to the main actor, which is where all
+    /// of AppEnvironment's mutable state lives anyway.
+    private(set) var scheduler: CleanupScheduler?
+
+    /// Starts or stops the loop to match the preference. Called from the
+    /// Settings toggle and once at launch.
+    func applySchedulePreference() {
+        if preferences.value.scheduleEnabled {
+            ensureScheduler().start()
+        } else {
+            scheduler?.stop()
+        }
+    }
+
+    private func ensureScheduler() -> CleanupScheduler {
+        if let scheduler { return scheduler }
+        nonisolated(unsafe) let environment = self
+        let fresh = CleanupScheduler(
+            environment: scanEnvironment,
+            preferences: preferences,
+            history: scanHistoryStore,
+            diskInfo: DiskInfoProvider(),
+            scan: { options in
+                await environment.performScan(options: options)
+            },
+            clean: { result in
+                await environment.performScheduledClean(result)
+            }
+        )
+        scheduler = fresh
+        return fresh
+    }
+
+    /// One scheduled run, inline: full scan, then — only when the safe-only
+    /// preference allows it — the preselected safe set through the normal
+    /// executor. Never navigates and never shows a confirmation sheet: a
+    /// background run that cannot clean safely just records what it found.
+    /// The "Run now" button calls exactly this.
+    func runScheduledCleanupNow() async {
+        guard !isScheduledRunRunning else { return }
+        isScheduledRunRunning = true
+        defer { isScheduledRunRunning = false }
+        // Stamp the slot at fire time, before work starts (a crash mid-run
+        // must not cause catch-up bursts on the next launch) — the same
+        // contract CleanupScheduler.fire follows.
+        preferences.update { $0.lastScheduledRun = Date() }
+
+        guard let result = await performScan(options: preferences.value.scanOptions) else { return }
+        finishScan(result)
+        guard preferences.value.scheduleAutoCleanSafeOnly else { return }
+        await performScheduledClean(result)
+    }
+
+    /// Runs one full scan to completion; nil when it failed or was cancelled.
+    func performScan(options: ScanOptions) async -> ScanResult? {
+        let coordinator = scanCoordinator(options: options)
+        for await update in coordinator.run() {
+            switch update {
+            case .progress:
+                continue
+            case .finished(let result):
+                return result
+            case .failed:
+                return nil
+            }
+        }
+        return nil
+    }
+
+    /// The clean half of a scheduled run: exactly the selection the
+    /// scheduler marked (safe, non-destructive) through the normal executor,
+    /// so history and reconciliation behave like every other cleanup.
+    func performScheduledClean(_ result: ScanResult) async {
+        let items = result.selectedItems
+        guard !items.isEmpty else { return }
+        await performCleanup(Self.cleaningRequest(for: items, scanResultID: result.id))
+    }
+
+    /// Runs one cleanup to completion and records the report (history +
+    /// reconciliation) exactly like the interactive path.
+    func performCleanup(_ request: CleaningRequest) async {
+        for await event in cleanupExecutor().run(
+            items: request.items,
+            confirmed: request.confirmed,
+            destructiveConfirmed: request.destructiveConfirmed
+        ) {
+            if case .finished(let report) = event {
+                finishCleanup(report)
+            }
+        }
     }
 
     func beginCleaning(_ request: CleaningRequest) {
