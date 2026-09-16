@@ -25,6 +25,13 @@ struct CleanoraApp: App {
                 .frame(width: 900, height: 620)
         }
         .windowResizability(.contentMinSize)
+        // Keyboard shortcuts (⌘R scan, ⌘1 dashboard) attach to the main
+        // window's scene only — Settings and the NSStatusItem popover are
+        // unaffected. environment is passed by init parameter: commands do
+        // not participate in .environment() propagation.
+        .commands {
+            CleanoraCommands(environment: environment)
+        }
     }
 
     private var settingsScene: some Scene {

@@ -391,3 +391,6 @@ Automated suites cover the engine and view-model logic; the following end-to-end
 24. **First-run explainer** — on first fixture boot the dashboard shows the three-point
     explainer card above a single Scan Mac button; after a scan the card is gone and never
     returns after Clear History.
+25. **Keyboard shortcuts** — ⌘R starts a scan and ⌘1 returns to the dashboard from any
+    screen while the main window is key; shortcuts never dead-end on an empty Results
+    screen (no such menu items exist).
