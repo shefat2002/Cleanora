@@ -185,7 +185,7 @@ final class DuplicatesViewModel {
             } catch is CancellationError {
                 self.phase = .cancelled
             } catch {
-                self.phase = .failed(error.localizedDescription)
+                self.phase = .failed(Self.failureMessage(for: error))
             }
         }
     }
@@ -403,6 +403,19 @@ final class DuplicatesViewModel {
             return "Checked \(filesExamined) files — \(groupsFound) groups found so far…"
         }
         return "Checked \(filesExamined) files…"
+    }
+
+    /// Scan failures are shaped for people, never raw exception strings: a
+    /// permission problem says what fixes it; anything else says what happened
+    /// and that nothing was touched.
+    nonisolated static func failureMessage(for error: Error) -> String {
+        let permissionDenied =
+            (error as? CocoaError)?.code == .fileReadNoPermission
+            || (error as? POSIXError)?.code == .EACCES
+        if permissionDenied {
+            return "Cleanora couldn't read one of the selected folders. Grant Full Disk Access in System Settings and try again."
+        }
+        return "The search couldn't finish. Nothing was changed — try again, or pick a different folder."
     }
 
     nonisolated static func defaultFileSize(for url: URL) -> Int64? {

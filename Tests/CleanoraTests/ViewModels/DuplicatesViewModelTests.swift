@@ -217,7 +217,40 @@ final class DuplicatesViewModelTests: XCTestCase {
         viewModel.find()
         let settled = await waitUntil { viewModel.phase != .scanning }
         XCTAssertTrue(settled)
-        XCTAssertEqual(viewModel.phase, .failed("boom"))
+        guard case let .failed(message) = viewModel.phase else {
+            return XCTFail("expected a failed phase, got \(viewModel.phase)")
+        }
+        XCTAssertNotEqual(message, "boom", "raw error text must never reach the UI")
+        XCTAssertEqual(
+            message,
+            "The search couldn't finish. Nothing was changed — try again, or pick a different folder."
+        )
+    }
+
+    func testFailureMessageDistinguishesPermissionErrors() {
+        let cocoaDenied = DuplicatesViewModel.failureMessage(
+            for: CocoaError(.fileReadNoPermission)
+        )
+        XCTAssertTrue(
+            cocoaDenied.contains("Full Disk Access"),
+            "permission failures must name the fix"
+        )
+
+        let posixDenied = DuplicatesViewModel.failureMessage(
+            for: POSIXError(.EACCES)
+        )
+        XCTAssertTrue(
+            posixDenied.contains("Full Disk Access"),
+            "permission failures must name the fix"
+        )
+
+        let other = DuplicatesViewModel.failureMessage(
+            for: NSError(domain: "test", code: 1)
+        )
+        XCTAssertFalse(
+            other.contains("Full Disk Access"),
+            "non-permission failures must not send the user hunting settings"
+        )
     }
 
     func testCancellationLeavesNothingBehind() async {
