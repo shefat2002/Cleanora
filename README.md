@@ -391,6 +391,8 @@ Automated suites cover the engine and view-model logic; the following end-to-end
 24. **First-run explainer** — on first fixture boot the dashboard shows the three-point
     explainer card above a single Scan Mac button; after a scan the card is gone and never
     returns after Clear History.
-25. **Keyboard shortcuts** — ⌘R starts a scan and ⌘1 returns to the dashboard from any
-    screen while the main window is key; shortcuts never dead-end on an empty Results
-    screen (no such menu items exist).
+25. **Keyboard shortcuts** — while idle, ⌘R starts a scan and ⌘1 returns to the dashboard
+    with the main window key; mid-scan or mid-clean both are refused by design (a running
+    scan is only cancellable from its own screen, and ⌘R on the scan screen does not
+    restart — a failed scan uses its on-screen Try Again); shortcuts never dead-end on an
+    empty Results screen (no such menu items exist).
