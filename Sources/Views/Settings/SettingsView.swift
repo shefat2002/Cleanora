@@ -31,7 +31,6 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Menu bar hint: keeps Cleanora in the menu bar when the main window is closed.")
-                Toggle("Show cleanup reminder", isOn: $store.preferences.showCleanupReminder)
                 Toggle("Show confirmation before cleaning", isOn: $store.preferences.confirmBeforeCleaning)
             }
 

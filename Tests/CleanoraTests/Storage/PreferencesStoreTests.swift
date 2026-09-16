@@ -124,4 +124,43 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertTrue(reloaded.value.askBeforeDeleting == false)
         XCTAssertEqual(reloaded.value.lastScheduledRun, runDate)
     }
+
+    // A blob from a build that still carried the removed `showCleanupReminder`
+    // key must decode with every other field intact — `JSONDecoder` ignores
+    // unknown keys, so dropping the field from `Preferences` never lands an
+    // old blob in the corrupt-blob reset path (which would wipe settings).
+    func testLegacyBlobWithCleanupReminderKeyStillDecodes() throws {
+        let defaults = makeDefaults()
+        let legacy = """
+        {"launchAtLogin": true, "showCleanupReminder": true, \
+        "askBeforeDeleting": false, "keepCleanupHistory": false, \
+        "enabledCategories": ["applicationCaches", "logs"]}
+        """
+        defaults.set(Data(legacy.utf8), forKey: preferencesKey)
+
+        let store = PreferencesStore(defaults: defaults)
+
+        XCTAssertTrue(store.value.launchAtLogin, "legacy value preserved")
+        XCTAssertFalse(store.value.askBeforeDeleting, "legacy value preserved")
+        XCTAssertFalse(store.value.keepCleanupHistory, "legacy value preserved")
+        XCTAssertEqual(store.value.enabledCategories, [.applicationCaches, .logs])
+        XCTAssertTrue(store.value.confirmBeforeCleaning, "unset fields keep their defaults")
+        XCTAssertFalse(store.value.scheduleEnabled)
+    }
+
+    // The removed preference must not reappear in freshly written blobs: after
+    // any mutation the raw persisted JSON carries no `showCleanupReminder` key.
+    func testPersistedBlobNoLongerContainsCleanupReminderKey() throws {
+        let defaults = makeDefaults()
+        let store = PreferencesStore(defaults: defaults)
+
+        store.update { $0.launchAtLogin = true }
+
+        let raw = try XCTUnwrap(defaults.data(forKey: preferencesKey))
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: raw) as? [String: Any]
+        )
+        XCTAssertNil(object["showCleanupReminder"], "dead key must not be persisted")
+        XCTAssertEqual(object["launchAtLogin"] as? Bool, true, "real fields still persist")
+    }
 }

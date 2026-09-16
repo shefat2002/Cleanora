@@ -166,7 +166,7 @@ cat > /tmp/qa-prefs.json <<'EOF'
  "enabledCategories":["applicationCaches","browserCaches","temporaryFiles","logs","trash",
  "developerData","largeFiles"],
  "includeDeveloperData":true,"keepCleanupHistory":true,"launchAtLogin":false,
- "menuBarEnabled":false,"showCleanupReminder":false,
+ "menuBarEnabled":false,
  "scheduleEnabled":false,"scheduleIntervalDays":7,"scheduleAutoCleanSafeOnly":true,
  "lastScheduledRun":null}
 EOF

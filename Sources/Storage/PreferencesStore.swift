@@ -5,7 +5,6 @@ import Foundation
 struct Preferences: Equatable, Codable, Sendable {
     // General
     var launchAtLogin: Bool = false
-    var showCleanupReminder: Bool = false
     var confirmBeforeCleaning: Bool = true
     /// M-01: keeps the menu bar item alive when the main window closes.
     var menuBarEnabled: Bool = false
@@ -61,7 +60,7 @@ struct Preferences: Equatable, Codable, Sendable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case launchAtLogin, showCleanupReminder, confirmBeforeCleaning, menuBarEnabled
+        case launchAtLogin, confirmBeforeCleaning, menuBarEnabled
         case enabledCategories, includeDeveloperData
         case askBeforeDeleting, automaticallyCleanSafeItems, keepCleanupHistory
         case scheduleEnabled, scheduleIntervalDays, scheduleAutoCleanSafeOnly
@@ -75,7 +74,6 @@ struct Preferences: Equatable, Codable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
-        showCleanupReminder = try container.decodeIfPresent(Bool.self, forKey: .showCleanupReminder) ?? false
         confirmBeforeCleaning = try container.decodeIfPresent(Bool.self, forKey: .confirmBeforeCleaning) ?? true
         menuBarEnabled = try container.decodeIfPresent(Bool.self, forKey: .menuBarEnabled) ?? false
         enabledCategories = try container.decodeIfPresent(
