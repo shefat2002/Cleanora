@@ -194,11 +194,16 @@ final class ResultsViewModel {
     }
 
     /// Banner copy for the reconciled review; nil when nothing was missing.
+    ///
+    /// States only what the existence check knows: the files are gone. It
+    /// cannot know who removed them, so the copy must not attribute the
+    /// removal to the cancelled run (pinned by
+    /// `testReconciliationBannerNeverClaimsDeletion`).
     nonisolated static func cancelledRunBanner(droppedCount: Int) -> String? {
         switch droppedCount {
         case 0: return nil
-        case 1: return "1 item was already cleaned in the cancelled run."
-        default: return "\(droppedCount) items were already cleaned in the cancelled run."
+        case 1: return "1 item in this review is no longer on disk."
+        default: return "\(droppedCount) items in this review are no longer on disk."
         }
     }
 

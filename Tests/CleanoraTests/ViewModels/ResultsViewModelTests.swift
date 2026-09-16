@@ -203,12 +203,27 @@ final class ResultsViewModelTests: XCTestCase {
         XCTAssertNil(ResultsViewModel.cancelledRunBanner(droppedCount: 0))
         XCTAssertEqual(
             ResultsViewModel.cancelledRunBanner(droppedCount: 1),
-            "1 item was already cleaned in the cancelled run."
+            "1 item in this review is no longer on disk."
         )
         XCTAssertEqual(
             ResultsViewModel.cancelledRunBanner(droppedCount: 3),
-            "3 items were already cleaned in the cancelled run."
+            "3 items in this review are no longer on disk."
         )
+    }
+
+    /// Regression pin against re-introducing the causality claim: the
+    /// existence check only knows files are gone, not who removed them, so
+    /// the banner must never say "cleaned" or name the cancelled run.
+    func testReconciliationBannerNeverClaimsDeletion() {
+        for count in [1, 3] {
+            guard let banner = ResultsViewModel.cancelledRunBanner(droppedCount: count) else {
+                XCTFail("count \(count) must produce banner copy")
+                continue
+            }
+            let lowercased = banner.lowercased()
+            XCTAssertFalse(lowercased.contains("cleaned"), "must not claim items were cleaned: \(banner)")
+            XCTAssertFalse(lowercased.contains("cancelled"), "must not attribute removal to the cancelled run: \(banner)")
+        }
     }
 
     // MARK: Large-file rows (P-09)
