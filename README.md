@@ -53,8 +53,55 @@ make verify        # layering check → xcodegen generate → build → full tes
 ./scripts/check-layering.sh   # engine layers must stay UI-free; must exit 0
 ```
 
-Last recorded gate run (2026-09-14, Phase 3): **508 tests, 0 failures, 6.7 s** (`make verify`
+Phase 3 gate run (2026-09-14): **508 tests, 0 failures, 6.7 s** (`make verify`
 exit 0 in 11.5 s, `check-layering: OK`). All 508 tests must pass before a phase gate.
+
+### UX quick wins gate (2026-09-16)
+
+Branch `ux-quick-wins` (HEAD `ecffdaf`, 12 commits on `main` 5ab07fb). Automated:
+**544 tests, 0 failures, 7.1 s** (`make verify` exit 0 in 10.2 s, `check-layering: OK`).
+
+Fixture-mode sanity (non-interactive only): fixture rebuilt via
+`./scripts/build-fixture-home.sh` — all 32 documented fixture paths present, the
+DuplicateScope pair byte-identical with the keeper newest (`Project B/report-copy.dat`),
+`unique.dat` differing, `big-video.bin` at 614,400 B (below the 500 MB threshold),
+`Docker.raw` 4 MiB logical / 0 blocks on disk, log/temp staleness stamps valid; app built
+(`BUILD SUCCEEDED`) and booted against the fixture with the seeded `com.cleanora.fixture`
+blob: alive 10 s at 0.0 % CPU, `SIGTERM` exits 143, no `com.cleanora.plist` in the real
+home, the pre-existing real `~/Library/Application Support/Cleanora` untouched, 0 crash
+reports, the fixture prefs suite still decodes after boot (not dropped), and an idle boot
+writes nothing under the fixture's Application Support.
+
+All 8 shipped changes carry unit tests; three of them also added manual checklist items
+(item 23 ← footer change, item 24 ← first-run card, item 25 ← menu commands):
+
+| # | Change | Automated coverage |
+|---|---|---|
+| 1 | Cancelled-run Results banner states only "no longer on disk" | `ResultsViewModelTests.testReconciliationBannerNeverClaimsDeletion` (+ existing `testCancelledRunBannerCopy`) |
+| 2 | Uninstaller failures honest (`leftoversError`, friendly inventory copy, Try Again, re-click retries the plan) | `UninstallerViewModelTests.testLeftoverPlanFailureSurfacesLeftoversErrorAndLeavesInventoryStateClean`, `testLeftoversErrorClearsOnSuccessfulReplan`, `testSelectingTheSameAppRetriesAfterAFailedPlan`, `testLeftoversFailureMessageNamesTheApp`, `testInventoryFailureMessageIsActionableNotRaw`, `testInventoryFailureMessageDistinguishesPermissionErrors` |
+| 3 | Duplicates failure copy friendly (permission-shaped FDA copy vs generic) | `DuplicatesViewModelTests.testFailureMessageDistinguishesPermissionErrors` |
+| 4 | Uninstall footer shows the real disabled reason | existing `UninstallerViewModelTests.testRunningAppDisablesUninstallWithReason`; manual item 23 |
+| 5 | First-run explainer card on the Dashboard | `DashboardViewModelTests.testFirstRunCopyIsPresentAndNeverPromisesNumbers`, `testFirstRunCopyDoesNotPromiseRecoverability`; manual item 24 |
+| 6 | Inert "Show cleanup reminder" preference removed, legacy blobs still decode | `PreferencesStoreTests.testLegacyBlobWithCleanupReminderKeyStillDecodes`, `testPersistedBlobNoLongerContainsCleanupReminderKey` |
+| 7 | Uninstaller inventory + leftover planning off the main actor | `UninstallerViewModelTests.testAppInventoryRunsItsEngineCallOffTheMainThread`, `testPlannedLeftoversRunsItsEngineCallOffTheMainThread`; `AppEnvironmentFlowTests.testOffMainWorkRunsOffTheMainThread`, `testOffMainRethrowsWorkErrors` |
+| 8 | "Cleanora" menu (⌘R, ⌘1) + NavigationPolicy in-flight guard | `NavigationPolicyTests` (6: idle allows all, clean-running blocks all but `.cleaning`, staging handoff stays open, scan-running blocks entering and leaving scan, ordinary browsing unaffected); `AppEnvironmentFlowTests` flight seams (`testCleanFlightFlagFlipsAroundBeginAndFinishCleanup`, `testCancelledCleanupReconciliationReleasesTheCleanFlight`, `testNavigationIsRefusedWhileACleanIsInFlight`, `testLeavingScanIsRefusedUntilTheScanTerminalReleasesIt`, `testScanDuringAScanIsRefusedButOrdinaryBrowsingIsNot`, `testScanDidFinishReleasesTheFlightBeforeItsOwnRouting`, `testAutoCleanHandoffSurvivesTheFreshCleanFlag`, `testScanViewModelReleasesTheFlightOnFailedAndCancelledTerminals`); manual item 25 |
+
+Pending human verification (fixture-mode, interactive — not automatable here):
+
+- **First-run explainer (item 24)** — on a fresh fixture boot the three-point card shows
+  above the single Scan Mac button; it disappears after the first scan and never returns
+  after Clear History.
+- **Uninstaller running-gate footer (item 23)** — with `Fixture Editor` launched and
+  leftover rows selected, the bar reads "Quit Fixture Editor first", never "select at
+  least one item".
+- **⌘R / ⌘1 (item 25)** — idle: ⌘R starts a scan, ⌘1 returns to the dashboard; mid-scan
+  and mid-clean both are refused; no dead-end on an empty Results screen.
+- **Cancelled-clean banner (change 1)** — after cancelling a clean, the results banner
+  claims only that the selected items are no longer on disk.
+- **Settings (change 6)** — the cleanup-reminder toggle row is gone with no layout gap
+  and the neighboring rows intact.
+- **Uninstaller responsiveness (change 7)** — no beachball while inventory + leftover
+  planning run against the fixture app.
 
 ### Fixture home (`CLEANORA_FIXTURE_HOME`)
 
