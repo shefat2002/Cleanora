@@ -170,4 +170,30 @@ final class DashboardViewModelTests: XCTestCase {
         )
         XCTAssertNil(DashboardViewModel.diskSummaryLine(for: nil, scan: nil))
     }
+
+    // MARK: First-run explainer copy
+
+    func testFirstRunCopyIsPresentAndNeverPromisesNumbers() {
+        // Headline numbers stay measured (`ScanResult`); explainer copy is
+        // strictly qualitative — a digit here would promise a byte amount.
+        XCTAssertFalse(DashboardViewModel.firstRunTitle.isEmpty)
+        XCTAssertEqual(DashboardViewModel.firstRunPoints.count, 3)
+        for point in DashboardViewModel.firstRunPoints {
+            XCTAssertFalse(point.isEmpty)
+        }
+        XCTAssertFalse(
+            DashboardViewModel.firstRunPoints.joined().contains(where: \.isNumber),
+            "explainer copy must not promise byte amounts"
+        )
+    }
+
+    func testFirstRunCopyDoesNotPromiseRecoverability() {
+        // Some removable items (Trash, containers) are gone for good, so the
+        // copy may never claim recovery.
+        let copy = ([DashboardViewModel.firstRunTitle] + DashboardViewModel.firstRunPoints)
+            .joined(separator: " ")
+            .lowercased()
+        XCTAssertFalse(copy.contains("recover"))
+        XCTAssertFalse(copy.contains("restorable"))
+    }
 }

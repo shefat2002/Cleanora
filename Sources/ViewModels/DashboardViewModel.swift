@@ -177,6 +177,15 @@ final class DashboardViewModel {
         return "Needs attention"
     }
 
+    /// First-run explainer. Factual only: no promised byte amounts
+    /// (measured-bytes rule), no alarm copy, no second CTA.
+    nonisolated static let firstRunTitle = "Cleanora finds files you can safely delete."
+    nonisolated static let firstRunPoints: [String] = [
+        "Scanning only reads your Mac — nothing is deleted or moved.",
+        "You review every item first. Items marked “Review” stay unselected.",
+        "Cleaning always shows exactly what will be removed before it starts.",
+    ]
+
     static func freeSpaceLine(for overview: DiskOverview?) -> String? {
         guard let overview else { return nil }
         return "\(overview.availableForImportantUsage.formattedByteCount) available"

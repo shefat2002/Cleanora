@@ -117,10 +117,8 @@ struct DashboardView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(viewModel.safeToCleanBytes.formattedByteCount) safe to clean")
                 } else {
-                    Text("Run your first scan to see what can be cleaned.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    firstRunExplainer
+                        .frame(maxWidth: Design.narrowColumnWidth)
                 }
 
                 if let freeSpaceLine = viewModel.freeSpaceLine {
@@ -178,6 +176,44 @@ struct DashboardView: View {
             .frame(maxWidth: Design.contentWidth)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// First-run explainer (no scan yet): what a scan does and does not do.
+    /// Informational only — no buttons, and no persisted first-launch flag;
+    /// it simply disappears once a scan exists.
+    private var firstRunExplainer: some View {
+        VStack(alignment: .leading, spacing: Design.spacingM) {
+            Text(DashboardViewModel.firstRunTitle)
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+
+            VStack(alignment: .leading, spacing: Design.spacingXS) {
+                ForEach(DashboardViewModel.firstRunPoints, id: \.self) { point in
+                    HStack(alignment: .firstTextBaseline, spacing: Design.spacingS) {
+                        Text("•")
+                            .font(.callout)
+                            .foregroundStyle(Color.accentColor)
+                            .accessibilityHidden(true)
+                        Text(point)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+            }
+        }
+        .padding(Design.spacingM)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: Design.cornerRadius)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.cornerRadius)
+                .strokeBorder(.quaternary)
+        )
+        .accessibilityElement(children: .contain)
     }
 
     private func categoryRows(_ viewModel: DashboardViewModel) -> some View {
