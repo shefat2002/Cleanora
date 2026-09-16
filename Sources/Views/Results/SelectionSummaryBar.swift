@@ -6,6 +6,10 @@ struct SelectionSummaryBar: View {
     /// Action copy; the uninstaller screen says "Uninstall", the duplicate
     /// finder "Move to Trash", everything else keeps "Clean Now".
     var title: String = "Clean Now"
+    /// Why the action is disabled when it is (e.g. the uninstaller's
+    /// running-app gate says "Quit … first"). Falls back to the generic
+    /// "select at least one item" copy when nil.
+    var disabledReason: String? = nil
     let selectedBytes: Int64
     let selectedCount: Int
     let canClean: Bool
@@ -24,6 +28,12 @@ struct SelectionSummaryBar: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(selectedBytes.formattedByteCount) selected, \(ResultsViewModelSummary.countLine(selectedCount))")
 
+            if !canClean, let disabledReason {
+                Text(disabledReason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer(minLength: Design.spacingS)
 
             PrimaryActionButton(
@@ -31,7 +41,7 @@ struct SelectionSummaryBar: View {
                 systemImage: "sparkles",
                 hint: canClean
                     ? "Shows what will be removed before anything is deleted."
-                    : "Select at least one item to clean.",
+                    : (disabledReason ?? "Select at least one item to clean."),
                 isEnabled: canClean,
                 action: onClean
             )

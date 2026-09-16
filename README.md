@@ -382,3 +382,6 @@ Automated suites cover the engine and view-model logic; the following end-to-end
     (`dd if=/dev/zero of="$FX/Library/Developer/Xcode/Archives/Big 1-1-26.xcarchive/Products/App.dSYM" bs=1 count=0 seek=600000000`),
     rescan: the "Old Xcode archives" card appears with the measured estimate, is inert
     (nothing is auto-selected) and routes back into the Developer Data review.
+23. **Uninstaller footer reason** — with the `Fixture Editor` app running and leftover
+    rows selected, the Uninstall bar reads "Quit Fixture Editor first" (next to the
+    totals and as the button's hint) — never "select at least one item".

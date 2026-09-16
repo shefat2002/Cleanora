@@ -106,6 +106,7 @@ struct UninstallerView: View {
                 Divider()
                 SelectionSummaryBar(
                     title: "Uninstall",
+                    disabledReason: viewModel.uninstallDisabledReason,
                     selectedBytes: viewModel.selectedBytes,
                     selectedCount: viewModel.selectedCount,
                     canClean: viewModel.canUninstall
