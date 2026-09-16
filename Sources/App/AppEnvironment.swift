@@ -71,6 +71,9 @@ final class AppEnvironment {
     private let fileRevealer: FileRevealer
     let folderPicker: FolderPicker
     let startupItems: StartupItemsController
+    /// M-06 regression seams (nil = default engine call, always via offMain).
+    private let inventoryLoader: InventoryLoader?
+    private let planner: LeftoverPlanner?
     private var cachedHistoryStore: ScanHistoryStore?
     /// Cached duplicate-finder state (M-04). Route navigation rebuilds
     /// screens, and a duplicate hunt is expensive — the view model (scope,
@@ -89,7 +92,9 @@ final class AppEnvironment {
         loginItem: LoginItemController? = nil,
         fileRevealer: FileRevealer? = nil,
         folderPicker: FolderPicker? = nil,
-        startupItems: StartupItemsController? = nil
+        startupItems: StartupItemsController? = nil,
+        inventoryLoader: InventoryLoader? = nil,
+        planner: LeftoverPlanner? = nil
     ) {
         // Fixture mode must not write the user's real preference domain —
         // scope defaults to a fixture-named suite there. An explicitly passed
@@ -110,6 +115,8 @@ final class AppEnvironment {
         self.fileRevealer = fileRevealer ?? .live()
         self.folderPicker = folderPicker ?? .live()
         self.startupItems = startupItems ?? .live()
+        self.inventoryLoader = inventoryLoader
+        self.planner = planner
     }
 
     // MARK: - Engines (the only construction sites in the app)
@@ -328,20 +335,36 @@ final class AppEnvironment {
 
     /// Synchronous tree walks (TreeMeasurement) must never run on the caller's
     /// (main) actor even though these engine calls are sync.
+    ///
+    /// Cancellation is intentionally not propagated (unstructured detached
+    /// task) — the sync engine call cannot observe it; a cancelled caller
+    /// still waits for the walk to complete.
     nonisolated static func offMain<T: Sendable>(
         _ work: @escaping @Sendable () throws -> T
     ) async throws -> T {
         try await Task.detached(priority: .userInitiated) { try work() }.value
     }
 
+    /// What `appInventory()` calls for its engine work. Nil = the default
+    /// `AppInventoryScanner`. Regression seam: whatever is set is invoked
+    /// through `offMain`, so tests can pin the off-main contract independently
+    /// of the engine call itself.
+    typealias InventoryLoader = @Sendable (ScanEnvironment) throws -> [InstalledApp]
+    /// Same seam for `plannedLeftovers(for:)` (default: `UninstallPlanner`).
+    typealias LeftoverPlanner = @Sendable (InstalledApp, ScanEnvironment) throws -> [CleanupItem]
+
     /// The installed-app inventory; async so the view can load it off the
     /// first frame without blocking body evaluation. The scan itself is a
-    /// synchronous tree walk, so it hops off the main actor (backlog: it
-    /// beachballed on Xcode-scale /Applications).
+    /// synchronous tree walk, so it hops off the main actor — it beachballed
+    /// on Xcode-scale /Applications before this hop.
     func appInventory() async throws -> [InstalledApp] {
         let scanEnvironment = self.scanEnvironment
+        let inventoryLoader = self.inventoryLoader
         return try await Self.offMain {
-            AppInventoryScanner().inventory(environment: scanEnvironment)
+            if let inventoryLoader {
+                return try inventoryLoader(scanEnvironment)
+            }
+            return AppInventoryScanner().inventory(environment: scanEnvironment)
         }
     }
 
@@ -350,8 +373,12 @@ final class AppEnvironment {
     /// inventory: the planner measures whole trees synchronously.
     func plannedLeftovers(for app: InstalledApp) async throws -> [CleanupItem] {
         let scanEnvironment = self.scanEnvironment
+        let planner = self.planner
         return try await Self.offMain {
-            UninstallPlanner.plan(for: app, environment: scanEnvironment)
+            if let planner {
+                return try planner(app, scanEnvironment)
+            }
+            return UninstallPlanner.plan(for: app, environment: scanEnvironment)
         }
     }
 

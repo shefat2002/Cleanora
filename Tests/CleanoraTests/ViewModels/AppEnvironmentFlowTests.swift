@@ -10,7 +10,9 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
     private func makeEnvironment(
         scanEnvironment scanEnvironmentOverride: ScanEnvironment? = nil,
         loginItem: LoginItemController? = nil,
-        fileRevealer: FileRevealer? = nil
+        fileRevealer: FileRevealer? = nil,
+        inventoryLoader: AppEnvironment.InventoryLoader? = nil,
+        planner: AppEnvironment.LeftoverPlanner? = nil
     ) -> AppEnvironment {
         // Isolated defaults: the standard domain may carry state from real
         // app runs and must never decide test outcomes.
@@ -23,7 +25,9 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
                 openFullDiskAccessSettings: {}
             ),
             loginItem: loginItem,
-            fileRevealer: fileRevealer
+            fileRevealer: fileRevealer,
+            inventoryLoader: inventoryLoader,
+            planner: planner
         )
     }
 
@@ -507,13 +511,78 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         let rows = try await env.plannedLeftovers(for: app)
 
         XCTAssertFalse(rows.isEmpty)
-        XCTAssertTrue(
-            rows.contains { $0.path == app.url },
-            "the application bundle itself leads the plan"
+        XCTAssertEqual(
+            try XCTUnwrap(rows.first).path, app.url,
+            "the application bundle leads the plan — the reason copy promises " +
+            "'the related files listed below it'"
         )
         XCTAssertTrue(
             rows.allSatisfy { !$0.selected },
             "review rows are never preselected — safety invariant"
+        )
+    }
+
+    /// Thread-safe recorder for the thread an injected engine closure ran on:
+    /// the closures execute on detached tasks, so a plain var would race.
+    private final class OffMainThreadProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedValue: Bool?
+        var lastRunOnMainThread: Bool? {
+            get { lock.withLock { storedValue } }
+        }
+        func record() {
+            lock.withLock { storedValue = Thread.isMainThread }
+        }
+    }
+
+    private func cannedApp(in environment: ScanEnvironment) -> InstalledApp {
+        InstalledApp(
+            name: "Canned", bundleID: "com.example.canned",
+            url: environment.applications.appendingPathComponent("Canned.app", isDirectory: true),
+            bundleSize: 1, version: "1.0"
+        )
+    }
+
+    // MARK: Regression seam — the offMain hop survives engine-call changes
+
+    func testAppInventoryRunsItsEngineCallOffTheMainThread() async throws {
+        let probe = OffMainThreadProbe()
+        let env = makeEnvironment(inventoryLoader: { environment in
+            probe.record()
+            return [InstalledApp(
+                name: "Canned", bundleID: "com.example.canned",
+                url: environment.applications.appendingPathComponent("Canned.app"),
+                bundleSize: 1, version: "1.0"
+            )]
+        })
+
+        let apps = try await env.appInventory()
+
+        XCTAssertEqual(apps.map(\.name), ["Canned"], "the injected engine call is used")
+        XCTAssertEqual(
+            probe.lastRunOnMainThread, false,
+            "the engine call must run off the main thread — the beachball fix"
+        )
+    }
+
+    func testPlannedLeftoversRunsItsEngineCallOffTheMainThread() async throws {
+        let probe = OffMainThreadProbe()
+        let app = cannedApp(in: environment)
+        let env = makeEnvironment(planner: { app, _ in
+            probe.record()
+            return [CleanupItem(
+                name: "Canned row", category: .appLeftovers,
+                path: app.url, size: 1, riskLevel: .review, reason: "test",
+                deletionMethod: .moveToTrash
+            )]
+        })
+
+        let rows = try await env.plannedLeftovers(for: app)
+
+        XCTAssertEqual(rows.map(\.name), ["Canned row"], "the injected engine call is used")
+        XCTAssertEqual(
+            probe.lastRunOnMainThread, false,
+            "the engine call must run off the main thread — the beachball fix"
         )
     }
 }
