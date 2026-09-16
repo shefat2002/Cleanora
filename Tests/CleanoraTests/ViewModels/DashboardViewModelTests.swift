@@ -182,7 +182,9 @@ final class DashboardViewModelTests: XCTestCase {
             XCTAssertFalse(point.isEmpty)
         }
         XCTAssertFalse(
-            DashboardViewModel.firstRunPoints.joined().contains(where: \.isNumber),
+            ([DashboardViewModel.firstRunTitle] + DashboardViewModel.firstRunPoints)
+                .joined()
+                .contains(where: \.isNumber),
             "explainer copy must not promise byte amounts"
         )
     }
@@ -194,6 +196,7 @@ final class DashboardViewModelTests: XCTestCase {
             .joined(separator: " ")
             .lowercased()
         XCTAssertFalse(copy.contains("recover"))
-        XCTAssertFalse(copy.contains("restorable"))
+        XCTAssertFalse(copy.contains("restor"), "covers restorable/restored")
+        XCTAssertFalse(copy.contains("undo"))
     }
 }
