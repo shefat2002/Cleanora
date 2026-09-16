@@ -8,6 +8,7 @@ import XCTest
 @MainActor
 final class AppEnvironmentFlowTests: TempHomeTestCase {
     private func makeEnvironment(
+        scanEnvironment scanEnvironmentOverride: ScanEnvironment? = nil,
         loginItem: LoginItemController? = nil,
         fileRevealer: FileRevealer? = nil
     ) -> AppEnvironment {
@@ -16,7 +17,7 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         let defaults = UserDefaults(suiteName: "AppEnvironmentFlowTests-\(UUID().uuidString)")!
         return AppEnvironment(
             preferences: PreferencesStore(defaults: defaults),
-            scanEnvironment: environment,
+            scanEnvironment: scanEnvironmentOverride ?? environment,
             permissionProbe: PermissionProbe(
                 hasFullDiskAccess: { true },
                 openFullDiskAccessSettings: {}
@@ -418,4 +419,104 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         XCTAssertNotNil(env.lastScanResult)
         XCTAssertNotNil(env.lastCleanupReport, "safe-only selection produced a real clean")
     }
+
+    // MARK: M-06 — inventory and leftover planning run off the main actor
+
+    /// The applications root the M-06 tests point the override at. The
+    /// override is MANDATORY: a default ScanEnvironment inventories the
+    /// machine's real /Applications.
+    private var fixtureApplications: URL {
+        tempRoot.appendingPathComponent("SystemApps", isDirectory: true)
+    }
+
+    /// Minimal .app bundle: Contents/MacOS binary + Contents/Info.plist,
+    /// same fixture pattern as AppInventoryScannerTests.makeApp.
+    @discardableResult
+    private func makeFixtureApp(
+        _ name: String,
+        bundleID: String? = "com.example.foo",
+        version: String? = "1.2.3",
+        in root: URL
+    ) throws -> URL {
+        let bundleURL = root.appendingPathComponent("\(name).app", isDirectory: true)
+        let contents = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        try FixtureBuilder.makeTree(
+            in: contents,
+            [("MacOS/\(name)", 4_096), ("Resources/logo.png", 2_048)]
+        )
+        var info: [String: Any] = [:]
+        if let bundleID { info["CFBundleIdentifier"] = bundleID }
+        if let version { info["CFBundleShortVersionString"] = version }
+        if !info.isEmpty {
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: info, format: .xml, options: 0
+            )
+            try data.write(to: contents.appendingPathComponent("Info.plist"))
+        }
+        return bundleURL
+    }
+
+    private func fixtureEnvironment() -> ScanEnvironment {
+        ScanEnvironment(
+            home: tempHome,
+            temporaryRoot: tempRoot,
+            applicationsOverride: fixtureApplications
+        )
+    }
+
+    func testOffMainWorkRunsOffTheMainThread() async throws {
+        // Hoisted: XCTest assertion autoclosures support neither try nor await.
+        let ranOnMainThread = try await AppEnvironment.offMain { Thread.isMainThread }
+        XCTAssertFalse(ranOnMainThread)
+    }
+
+    func testOffMainRethrowsWorkErrors() async throws {
+        do {
+            _ = try await AppEnvironment.offMain { throw OffMainProbeError() }
+            XCTFail("the closure's error must propagate")
+        } catch {
+            XCTAssertEqual(error as? OffMainProbeError, OffMainProbeError())
+        }
+    }
+
+    func testAppInventoryReturnsFixtureApps() async throws {
+        let bundle = try makeFixtureApp("Foo", in: fixtureApplications)
+        let env = makeEnvironment(scanEnvironment: fixtureEnvironment())
+
+        let apps = try await env.appInventory()
+
+        XCTAssertEqual(apps.map(\.name), ["Foo"])
+        XCTAssertEqual(
+            canonicalTestPath(try XCTUnwrap(apps.first).url),
+            canonicalTestPath(bundle),
+            "the override root is inventoried, never the machine's real /Applications"
+        )
+    }
+
+    func testPlannedLeftoversReturnsRowsForFixtureApp() async throws {
+        try makeFixtureApp("Foo", in: fixtureApplications)
+        // A related cache folder so the plan carries more than the bundle row.
+        let cacheDir = tempHome.appendingPathComponent(
+            "Library/Caches/com.example.foo", isDirectory: true
+        )
+        try FixtureBuilder.makeTree(in: cacheDir, [("blob.bin", 512)])
+        let env = makeEnvironment(scanEnvironment: fixtureEnvironment())
+
+        let apps = try await env.appInventory()
+        let app = try XCTUnwrap(apps.first)
+        let rows = try await env.plannedLeftovers(for: app)
+
+        XCTAssertFalse(rows.isEmpty)
+        XCTAssertTrue(
+            rows.contains { $0.path == app.url },
+            "the application bundle itself leads the plan"
+        )
+        XCTAssertTrue(
+            rows.allSatisfy { !$0.selected },
+            "review rows are never preselected — safety invariant"
+        )
+    }
 }
+
+/// Thrown by the offMain rethrow test; file-scope so Equatable synthesis works.
+private struct OffMainProbeError: Error, Equatable {}

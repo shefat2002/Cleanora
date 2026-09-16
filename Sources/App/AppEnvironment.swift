@@ -326,16 +326,33 @@ final class AppEnvironment {
 
     // MARK: - App uninstaller (M-06)
 
+    /// Synchronous tree walks (TreeMeasurement) must never run on the caller's
+    /// (main) actor even though these engine calls are sync.
+    nonisolated static func offMain<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await Task.detached(priority: .userInitiated) { try work() }.value
+    }
+
     /// The installed-app inventory; async so the view can load it off the
-    /// first frame without blocking body evaluation.
+    /// first frame without blocking body evaluation. The scan itself is a
+    /// synchronous tree walk, so it hops off the main actor (backlog: it
+    /// beachballed on Xcode-scale /Applications).
     func appInventory() async throws -> [InstalledApp] {
-        AppInventoryScanner().inventory(environment: scanEnvironment)
+        let scanEnvironment = self.scanEnvironment
+        return try await Self.offMain {
+            AppInventoryScanner().inventory(environment: scanEnvironment)
+        }
     }
 
     /// Planned related files for one app, straight from the planner — the UI
-    /// never invents deletion targets.
+    /// never invents deletion targets. Planned off the main actor like the
+    /// inventory: the planner measures whole trees synchronously.
     func plannedLeftovers(for app: InstalledApp) async throws -> [CleanupItem] {
-        UninstallPlanner.plan(for: app, environment: scanEnvironment)
+        let scanEnvironment = self.scanEnvironment
+        return try await Self.offMain {
+            UninstallPlanner.plan(for: app, environment: scanEnvironment)
+        }
     }
 
     /// True when the app is running: matched by bundle identifier, or — for
