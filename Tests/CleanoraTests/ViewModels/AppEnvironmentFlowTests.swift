@@ -200,6 +200,125 @@ final class AppEnvironmentFlowTests: TempHomeTestCase {
         XCTAssertNotNil(env.takePendingCleaning())
     }
 
+    // MARK: Navigation guard — in-flight flags (⌘R/⌘1 mid-flow regressions)
+
+    private func cleanupReport() -> CleanupReport {
+        CleanupReport(
+            startedAt: Date(), finishedAt: Date(), outcomes: [],
+            freeSpaceBefore: nil, freeSpaceAfter: nil, scanResultID: nil
+        )
+    }
+
+    func testCleanFlightFlagFlipsAroundBeginAndFinishCleanup() {
+        let env = makeEnvironment()
+        XCTAssertFalse(env.isCleanInFlight)
+
+        env.beginCleaning(AppEnvironment.cleaningRequest(for: [safeItem()], scanResultID: nil))
+        XCTAssertTrue(env.isCleanInFlight, "staging a clean is committing to the non-dismissable flow")
+
+        env.finishCleanup(cleanupReport())
+        XCTAssertFalse(env.isCleanInFlight, "the finished cleanup releases navigation")
+    }
+
+    func testCancelledCleanupReconciliationReleasesTheCleanFlight() {
+        let env = makeEnvironment()
+        env.beginCleaning(AppEnvironment.cleaningRequest(for: [safeItem()], scanResultID: nil))
+
+        env.markResultsStaleAfterCancelledCleanup()
+
+        XCTAssertFalse(env.isCleanInFlight, "the cancelled run must release the flight — CleaningView navigates to Results immediately after")
+    }
+
+    func testNavigationIsRefusedWhileACleanIsInFlight() {
+        let env = makeEnvironment()
+        env.beginCleaning(AppEnvironment.cleaningRequest(for: [safeItem()], scanResultID: nil))
+        env.navigation.go(.cleaning)
+
+        env.navigation.go(.dashboard)
+        XCTAssertEqual(env.navigation.route, .cleaning, "⌘1 must not escape the non-dismissable cleaning screen")
+        env.navigation.go(.scan)
+        XCTAssertEqual(env.navigation.route, .cleaning, "⌘R must not start anything mid-clean")
+
+        // The finished cleanup releases the guard, exactly like the flow's
+        // own .completion navigation.
+        env.finishCleanup(cleanupReport())
+        env.navigation.go(.dashboard)
+        XCTAssertEqual(env.navigation.route, .dashboard)
+    }
+
+    func testLeavingScanIsRefusedUntilTheScanTerminalReleasesIt() {
+        let env = makeEnvironment()
+        env.navigation.go(.scan)
+        env.scanDidStart()
+
+        env.navigation.go(.dashboard)
+        XCTAssertEqual(env.navigation.route, .scan, "a scan is cancellable via the in-screen Cancel, not abandonable with ⌘1")
+
+        env.scanDidEnd()
+        env.navigation.go(.dashboard)
+        XCTAssertEqual(env.navigation.route, .dashboard, "the terminal releases the flight before the cancelled screen navigates")
+    }
+
+    func testScanDuringAScanIsRefusedButOrdinaryBrowsingIsNot() {
+        let env = makeEnvironment()
+        env.scanDidStart()
+
+        env.navigation.go(.scan)
+        XCTAssertEqual(env.navigation.route, .dashboard, "⌘R / menu-bar Scan Mac must not start a second scan")
+
+        env.navigation.go(.history)
+        XCTAssertEqual(env.navigation.route, .history, "a background scheduled scan must not freeze ordinary browsing")
+    }
+
+    func testScanDidFinishReleasesTheFlightBeforeItsOwnRouting() {
+        let env = makeEnvironment()
+        env.scanDidStart()
+
+        env.scanDidFinish(makeResult(items: [safeItem()]))
+
+        XCTAssertFalse(env.isScanInFlight)
+        XCTAssertEqual(env.navigation.route, .results, "the flow's own .results routing must survive the guard")
+    }
+
+    func testAutoCleanHandoffSurvivesTheFreshCleanFlag() {
+        let env = makeEnvironment()
+        env.preferences.update { $0.automaticallyCleanSafeItems = true }
+        env.scanDidStart()
+
+        env.scanDidFinish(makeResult(items: [safeItem()]))
+
+        XCTAssertEqual(env.navigation.route, .cleaning, "beginCleaning → go(.cleaning) must not be refused by the flag it just set")
+        XCTAssertTrue(env.isCleanInFlight)
+    }
+
+    func testScanViewModelReleasesTheFlightOnFailedAndCancelledTerminals() async {
+        let env = makeEnvironment()
+        let failed = ScanViewModel(
+            keys: [ScannerKey(id: .applicationCaches)],
+            makeStream: { TestStreams.scan([.failed("disk gone")]) },
+            onStart: { env.scanDidStart() },
+            onEnd: { env.scanDidEnd() }
+        )
+        failed.start()
+        XCTAssertTrue(env.isScanInFlight, "an actually-started scan occupies the slot")
+        let didFail = await waitUntil { failed.phase == .failed("disk gone") }
+        XCTAssertTrue(didFail)
+        XCTAssertFalse(env.isScanInFlight, "the failed terminal must release the flight, or navigation stays blocked forever")
+
+        let cancellable = ScanViewModel(
+            keys: [ScannerKey(id: .applicationCaches)],
+            makeStream: { TestStreams.scan([.progress(ScanProgress(states: [:]))], holdOpen: true) },
+            onStart: { env.scanDidStart() },
+            onEnd: { env.scanDidEnd() }
+        )
+        cancellable.start()
+        XCTAssertTrue(env.isScanInFlight)
+        cancellable.cancel()
+        let didCancel = await waitUntil { cancellable.phase == .cancelled }
+        XCTAssertTrue(didCancel)
+        XCTAssertFalse(env.isScanInFlight, "the cancelled terminal must release the flight too")
+    }
+
     // MARK: Fan-out progress rows (engine-a2 wiring)
 
     func testScanViewModelExpandsDeveloperFanOutProgressRows() {

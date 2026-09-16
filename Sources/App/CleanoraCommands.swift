@@ -3,7 +3,9 @@ import SwiftUI
 /// Minimal app menu (UX quick wins): the two navigation actions that are
 /// safe from any state. Deliberately NO shortcuts into .results/.cleaning/
 /// .completion — routing to Results with no scan leaves the screen stuck
-/// on its loading spinner (ResultsView has no empty state for that route).
+/// on its loading spinner (ResultsView does have an EmptyStateView, but it
+/// is unreachable without lastScanResult: with no result the view model
+/// never builds and the spinner never resolves).
 struct CleanoraCommands: Commands {
     let environment: AppEnvironment
 

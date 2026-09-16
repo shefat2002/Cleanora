@@ -64,6 +64,18 @@ final class AppEnvironment {
     /// M-07: a "Run now"/scheduled run is executing; Settings disables the
     /// button while this is true.
     private(set) var isScheduledRunRunning = false
+    /// A scan is executing — interactive (ScanViewModel) or scheduled
+    /// (performScan). NavigationPolicy refuses routes INTO .scan while this
+    /// is true: ScanViewModel's idle guard is per-instance, so a second
+    /// entry would start a second coordinator and the two would race to
+    /// scanDidFinish (double history, double auto-clean).
+    private(set) var isScanInFlight = false
+    /// An interactive clean is staged or running (set by beginCleaning).
+    /// NavigationPolicy refuses every route except the .cleaning handoff
+    /// while this is true — the cleaning screen is non-dismissable by
+    /// design, and escaping it would orphan a run that later teleports the
+    /// user to .completion.
+    private(set) var isCleanInFlight = false
 
     private let appDirectories: AppDirectories
     private let permissionProbe: PermissionProbe
@@ -117,6 +129,19 @@ final class AppEnvironment {
         self.startupItems = startupItems ?? .live()
         self.inventoryLoader = inventoryLoader
         self.planner = planner
+
+        // The navigation guard reads THIS environment's in-flight flags; the
+        // weak capture keeps environment → navigation → closure →
+        // environment from becoming a retain cycle.
+        navigation.mayNavigate = { [weak self] current, destination in
+            guard let self else { return true }
+            return !NavigationPolicy.isBlocked(
+                current: current,
+                destination: destination,
+                isScanRunning: isScanInFlight,
+                isCleanRunning: isCleanInFlight
+            )
+        }
     }
 
     // MARK: - Engines (the only construction sites in the app)
@@ -166,6 +191,21 @@ final class AppEnvironment {
 
     // MARK: - Flow transitions
 
+    /// A scan actually started (ScanViewModel.start, or performScan for a
+    /// scheduled run). Idempotent.
+    func scanDidStart() {
+        isScanInFlight = true
+    }
+
+    /// The scan flight ended. Every terminal clears it — .finished via
+    /// scanDidFinish below, .failed and .cancelled via the view model's
+    /// onEnd — otherwise the guard would block navigation forever. Kept a
+    /// separate method so a terminal can never be forgotten inside
+    /// scanDidFinish's routing decisions.
+    func scanDidEnd() {
+        isScanInFlight = false
+    }
+
     func finishScan(_ result: ScanResult) {
         lastScanResult = result
         // A new scan replaces the old review wholesale — any pending
@@ -179,6 +219,10 @@ final class AppEnvironment {
     /// cleanup starts without the confirmation sheet; every other path shows
     /// Results, and a skipped auto-clean says why.
     func scanDidFinish(_ result: ScanResult) {
+        // The .finished terminal releases the flight BEFORE this method's
+        // own routing (and before beginCleaning raises the clean flag), so
+        // the flow's transitions never refuse themselves.
+        scanDidEnd()
         finishScan(result)
         let decision = CleaningFlowPolicy.autoCleanDecision(
             isEnabled: preferences.value.automaticallyCleanSafeItems,
@@ -211,6 +255,9 @@ final class AppEnvironment {
     /// state, because items removed before the cancel still sit in the old
     /// view model with stale sizes.
     func markResultsStaleAfterCancelledCleanup() {
+        // The cancelled run has ended its flight; clearing here unblocks the
+        // .results navigation CleaningView performs immediately after.
+        isCleanInFlight = false
         resultsNeedReconciliation = true
     }
 
@@ -464,6 +511,11 @@ final class AppEnvironment {
 
     /// Runs one full scan to completion; nil when it failed or was cancelled.
     func performScan(options: ScanOptions) async -> ScanResult? {
+        // A scheduled scan occupies the same one-scan-at-a-time slot as an
+        // interactive one: ⌘R / the menu-bar Scan Mac button must no-op
+        // while it runs. The defer releases the slot even on failure.
+        scanDidStart()
+        defer { scanDidEnd() }
         let coordinator = scanCoordinator(options: options)
         for await update in coordinator.run() {
             switch update {
@@ -513,6 +565,11 @@ final class AppEnvironment {
 
     func beginCleaning(_ request: CleaningRequest) {
         pendingCleaning = request
+        // The flight flag rises at staging, not at CleaningView.run(): the
+        // staged request is already committed to the non-dismissable flow.
+        // The follow-up go(.cleaning) passes because NavigationPolicy keeps
+        // the handoff INTO .cleaning open.
+        isCleanInFlight = true
     }
 
     /// Consumed exactly once, by CleaningView, when the cleaning route opens.
@@ -523,6 +580,10 @@ final class AppEnvironment {
     }
 
     func finishCleanup(_ report: CleanupReport) {
+        // The .finished terminal releases the flight first, so the caller's
+        // own .completion navigation (CleaningViewModel.onFinish) survives
+        // the guard.
+        isCleanInFlight = false
         lastCleanupReport = report
         reconcileLastScan(after: report)
         guard preferences.value.keepCleanupHistory else { return }

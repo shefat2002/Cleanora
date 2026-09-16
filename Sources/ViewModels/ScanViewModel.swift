@@ -36,16 +36,28 @@ final class ScanViewModel {
 
     private let makeStream: @MainActor () -> AsyncStream<ScanUpdate>
     private let onFinish: @MainActor (ScanResult) -> Void
+    /// Flight bookkeeping for AppEnvironment's navigation guard: onStart
+    /// fires when the scan actually starts, onEnd on EVERY terminal
+    /// (.finished, .failed, .cancelled) — a forgotten edge would block
+    /// navigation forever (see NavigationPolicy). The view model is
+    /// guaranteed to reach a terminal because navigation away mid-flight is
+    /// itself refused.
+    private let onStart: @MainActor () -> Void
+    private let onEnd: @MainActor () -> Void
     private var task: Task<Void, Never>?
 
     init(
         keys: [ScannerKey],
         makeStream: @escaping @MainActor () -> AsyncStream<ScanUpdate>,
-        onFinish: @escaping @MainActor (ScanResult) -> Void = { _ in }
+        onFinish: @escaping @MainActor (ScanResult) -> Void = { _ in },
+        onStart: @escaping @MainActor () -> Void = {},
+        onEnd: @escaping @MainActor () -> Void = {}
     ) {
         self.keys = keys
         self.makeStream = makeStream
         self.onFinish = onFinish
+        self.onStart = onStart
+        self.onEnd = onEnd
     }
 
     convenience init(environment: AppEnvironment) {
@@ -61,13 +73,16 @@ final class ScanViewModel {
                 // and an auto-clean (safe items, no confirmation) — including
                 // the loud fallback when auto-clean had to be skipped.
                 environment.scanDidFinish(result)
-            }
+            },
+            onStart: { environment.scanDidStart() },
+            onEnd: { environment.scanDidEnd() }
         )
     }
 
     func start() {
         guard phase == .idle else { return }
         phase = .running
+        onStart()
         task = Task { [weak self] in
             guard let self else { return }
             let stream = self.makeStream()
@@ -78,6 +93,7 @@ final class ScanViewModel {
             // happens is cancellation.
             if self.phase == .running {
                 self.phase = .cancelled
+                self.onEnd()
             }
         }
     }
@@ -102,8 +118,10 @@ final class ScanViewModel {
         case .finished(let result):
             phase = .finished
             onFinish(result)
+            onEnd()
         case .failed(let message):
             phase = .failed(message)
+            onEnd()
         }
     }
 
