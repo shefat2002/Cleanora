@@ -80,6 +80,32 @@ final class UninstallerViewModelTests: XCTestCase {
         )
     }
 
+    func testInventoryFailureMessageDistinguishesPermissionErrors() {
+        let cocoaDenied = UninstallerViewModel.inventoryFailureMessage(
+            for: CocoaError(.fileReadNoPermission)
+        )
+        XCTAssertTrue(
+            cocoaDenied.contains("Full Disk Access"),
+            "permission failures must name the fix"
+        )
+
+        let posixDenied = UninstallerViewModel.inventoryFailureMessage(
+            for: POSIXError(.EACCES)
+        )
+        XCTAssertTrue(
+            posixDenied.contains("Full Disk Access"),
+            "permission failures must name the fix"
+        )
+
+        let other = UninstallerViewModel.inventoryFailureMessage(
+            for: NSError(domain: "test", code: 1)
+        )
+        XCTAssertFalse(
+            other.contains("Full Disk Access"),
+            "non-permission failures must not send the user hunting settings"
+        )
+    }
+
     // MARK: - Search filter
 
     func testFilterMatchesNameOrBundleIDCaseInsensitively() {
@@ -225,6 +251,44 @@ final class UninstallerViewModelTests: XCTestCase {
         XCTAssertTrue(settled)
         XCTAssertNil(viewModel.leftoversError)
         XCTAssertFalse(viewModel.leftovers.isEmpty)
+    }
+
+    func testSelectingTheSameAppRetriesAfterAFailedPlan() async {
+        let flaky = app(name: "Flaky", bundleID: "com.example.flaky")
+        var shouldThrow = true
+        let viewModel = UninstallerViewModel(
+            loadInventory: { [flaky] },
+            planLeftovers: { _ in
+                if shouldThrow {
+                    throw NSError(domain: "test", code: 1)
+                }
+                return [
+                    VMFixtures.item(
+                        name: "support",
+                        category: .appLeftovers,
+                        size: 10,
+                        risk: .review
+                    )
+                ]
+            },
+            isAppRunning: { _ in false }
+        )
+        await viewModel.loadInventoryIfNeeded()
+
+        viewModel.select(viewModel.apps[0])
+        var settled = await waitUntil { !viewModel.isLoadingLeftovers }
+        XCTAssertTrue(settled)
+        XCTAssertNotNil(viewModel.leftoversError)
+
+        // The failure copy promises "try selecting it again" — re-clicking
+        // the SAME row must retry the plan, not be swallowed by the guard.
+        shouldThrow = false
+        viewModel.select(viewModel.apps[0])
+        settled = await waitUntil { !viewModel.isLoadingLeftovers }
+        XCTAssertTrue(settled)
+
+        XCTAssertNil(viewModel.leftoversError)
+        XCTAssertEqual(viewModel.leftovers.count, 1)
     }
 
     func testLeftoversFailureMessageNamesTheApp() {

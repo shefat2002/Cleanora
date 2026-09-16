@@ -97,9 +97,15 @@ final class UninstallerViewModel {
     }
 
     func select(_ app: InstalledApp) {
-        guard selectedApp != app else { return }
+        if selectedApp == app {
+            // The failure copy promises "try selecting it again" — honor it:
+            // re-clicking a failed row retries the plan. Healthy or in-flight
+            // plans still ignore the re-click so row selections survive.
+            guard leftoversError != nil, !isLoadingLeftovers else { return }
+        }
         selectedApp = app
         leftovers = []
+        leftoversError = nil
         revalidateRunningGate()
         // Third-party leftovers are review rows; nothing is ever preselected,
         // no matter what the planner produced.
