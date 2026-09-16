@@ -57,6 +57,29 @@ final class UninstallerViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isEmpty)
     }
 
+    func testInventoryFailureMessageIsActionableNotRaw() async {
+        let viewModel = UninstallerViewModel(
+            loadInventory: {
+                throw NSError(
+                    domain: "test",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "boom"]
+                )
+            },
+            planLeftovers: { _ in [] },
+            isAppRunning: { _ in false }
+        )
+        await viewModel.loadInventoryIfNeeded()
+
+        let message = viewModel.inventoryError
+        XCTAssertNotNil(message)
+        XCTAssertNotEqual(message, "boom", "raw error text must never reach the UI")
+        XCTAssertTrue(
+            message?.range(of: "try again", options: .caseInsensitive) != nil,
+            "the message must tell the user what to do next"
+        )
+    }
+
     // MARK: - Search filter
 
     func testFilterMatchesNameOrBundleIDCaseInsensitively() {
@@ -139,6 +162,78 @@ final class UninstallerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.leftovers.map(\.selected), [false])
         XCTAssertEqual(viewModel.selectedBytes, 0)
+    }
+
+    // MARK: - Leftover-plan failure surfacing
+
+    func testLeftoverPlanFailureSurfacesLeftoversErrorAndLeavesInventoryStateClean() async {
+        let fragile = app(name: "Fragile", bundleID: "com.example.fragile")
+        let viewModel = UninstallerViewModel(
+            loadInventory: { [fragile] },
+            planLeftovers: { _ in throw NSError(domain: "test", code: 1) },
+            isAppRunning: { _ in false }
+        )
+        await viewModel.loadInventoryIfNeeded()
+        viewModel.select(viewModel.apps[0])
+        let settled = await waitUntil { !viewModel.isLoadingLeftovers }
+        XCTAssertTrue(settled)
+
+        XCTAssertNotNil(viewModel.leftoversError)
+        XCTAssertNil(
+            viewModel.inventoryError,
+            "a failed plan is not an inventory problem — inventory state stays clean"
+        )
+        XCTAssertTrue(viewModel.leftovers.isEmpty)
+        XCTAssertFalse(viewModel.canUninstall, "nothing may be cleaned from a failed plan")
+    }
+
+    func testLeftoversErrorClearsOnSuccessfulReplan() async {
+        let failing = app(name: "Broken", bundleID: "com.example.broken")
+        let healthy = app(name: "Healthy", bundleID: "com.example.healthy")
+        let viewModel = UninstallerViewModel(
+            loadInventory: { [failing, healthy] },
+            planLeftovers: { app in
+                if app.bundleID == "com.example.broken" {
+                    throw NSError(domain: "test", code: 1)
+                }
+                return [
+                    VMFixtures.item(
+                        name: "support",
+                        category: .appLeftovers,
+                        size: 10,
+                        risk: .review
+                    )
+                ]
+            },
+            isAppRunning: { _ in false }
+        )
+        await viewModel.loadInventoryIfNeeded()
+
+        guard let broken = viewModel.apps.first(where: { $0.bundleID == "com.example.broken" }),
+              let healthyApp = viewModel.apps.first(where: { $0.bundleID == "com.example.healthy" })
+        else {
+            return XCTFail("test fixtures missing from inventory")
+        }
+
+        viewModel.select(broken)
+        var settled = await waitUntil { !viewModel.isLoadingLeftovers }
+        XCTAssertTrue(settled)
+        XCTAssertNotNil(viewModel.leftoversError)
+
+        viewModel.select(healthyApp)
+        settled = await waitUntil { !viewModel.isLoadingLeftovers }
+        XCTAssertTrue(settled)
+        XCTAssertNil(viewModel.leftoversError)
+        XCTAssertFalse(viewModel.leftovers.isEmpty)
+    }
+
+    func testLeftoversFailureMessageNamesTheApp() {
+        let subject = app(name: "Pixelmator")
+        let message = UninstallerViewModel.leftoversFailureMessage(
+            for: subject,
+            error: NSError(domain: "test", code: 1)
+        )
+        XCTAssertTrue(message.contains("Pixelmator"))
     }
 
     // MARK: - Pure helpers

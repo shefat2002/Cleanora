@@ -17,10 +17,17 @@ struct UninstallerView: View {
                     VStack(spacing: 0) {
                         header
                         Divider()
+                        // The message is the VM's friendly copy; "Try Again"
+                        // re-enters loadInventoryIfNeeded, whose guard permits
+                        // a retry because `apps` is still empty after failure.
                         EmptyStateView(
                             systemImage: "exclamationmark.triangle",
                             title: "Couldn't read installed apps",
-                            message: viewModel.inventoryError ?? "Unknown error."
+                            message: viewModel.inventoryError ?? "Unknown error.",
+                            actionTitle: "Try Again",
+                            action: {
+                                Task { await viewModel.loadInventoryIfNeeded() }
+                            }
                         )
                     }
                 } else {
@@ -268,6 +275,20 @@ struct UninstallerView: View {
             if viewModel.isLoadingLeftovers {
                 ProgressView()
                     .padding(.top, Design.spacingS)
+            } else if let leftoversError = viewModel.leftoversError {
+                // A failed plan must not read as "No related files found" —
+                // same shape as the running-gate note above, but neutral:
+                // nothing was changed, the user can simply try again.
+                Label(leftoversError, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(Design.spacingS)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        .quaternary.opacity(0.4),
+                        in: RoundedRectangle(cornerRadius: Design.cornerRadius)
+                    )
+                    .accessibilityElement(children: .combine)
             } else if viewModel.leftovers.isEmpty {
                 Text("No related files found — removing the app bundle is all there is to it.")
                     .font(.callout)

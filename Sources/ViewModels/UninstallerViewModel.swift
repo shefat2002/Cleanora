@@ -22,6 +22,12 @@ final class UninstallerViewModel {
     private(set) var leftovers: [CleanupItem] = []
     private(set) var isLoadingLeftovers = false
 
+    /// Failure from planning the selected app's leftovers. Deliberately
+    /// separate from `inventoryError`: a failed plan is not an inventory
+    /// problem, and the detail pane must show it instead of falling through
+    /// to the "No related files found" empty state.
+    private(set) var leftoversError: String?
+
     /// Running-gate result for the selected app. Refreshed on select AND on
     /// every uninstall attempt (reviewer finding: a select-time snapshot goes
     /// stale — launch the app after selecting, and the old gate would trash
@@ -86,7 +92,7 @@ final class UninstallerViewModel {
             filteredApps = apps
             inventoryError = nil
         } catch {
-            inventoryError = error.localizedDescription
+            inventoryError = Self.inventoryFailureMessage(for: error)
         }
     }
 
@@ -102,9 +108,11 @@ final class UninstallerViewModel {
             guard let self else { return }
             do {
                 self.leftovers = Self.unchecked(try await self.planLeftovers(app))
-                self.inventoryError = nil
+                self.leftoversError = nil
             } catch {
-                self.inventoryError = error.localizedDescription
+                // `leftovers` stays empty from the synchronous clear above, so
+                // a failed plan can never enable Uninstall.
+                self.leftoversError = Self.leftoversFailureMessage(for: app, error: error)
             }
             self.isLoadingLeftovers = false
         }
@@ -158,6 +166,29 @@ final class UninstallerViewModel {
             $0.name.range(of: trimmed, options: .caseInsensitive) != nil
                 || ($0.bundleID ?? "").range(of: trimmed, options: .caseInsensitive) != nil
         }
+    }
+
+    /// Inventory failures are shaped for people, never raw error strings: a
+    /// permission problem says what fixes it; anything else says what happened
+    /// and that nothing was touched.
+    nonisolated static func inventoryFailureMessage(for error: Error) -> String {
+        let permissionDenied =
+            (error as? CocoaError)?.code == .fileReadNoPermission
+            || (error as? POSIXError)?.code == .EACCES
+        if permissionDenied {
+            return "Cleanora couldn't read your applications folder. Grant Full Disk Access in System Settings, then try again."
+        }
+        return "Cleanora couldn't read your applications folder. Nothing was changed — try again."
+    }
+
+    /// A failed plan must not read as "No related files found": name the app
+    /// and state plainly that nothing was changed. The error itself is kept in
+    /// the signature for future detail; the user copy stays factual either way.
+    nonisolated static func leftoversFailureMessage(
+        for app: InstalledApp,
+        error: Error
+    ) -> String {
+        "Cleanora couldn't check \(app.name)'s related files. Nothing was changed — try selecting it again."
     }
 
     /// Defense in depth: the planner promises review rows that start
