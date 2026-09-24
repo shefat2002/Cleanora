@@ -1,0 +1,26 @@
+version: 1
+episodes:
+  - id: 84fabf16-ep-1
+    title: Cleanora roadmap planning
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-2
+    title: Phase 0 foundation and gate
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-3
+    title: Phase 1 parallel build
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-4
+    title: Phase 1 scan correctness fixes
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-5
+    title: Phase 2 build and review
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-6
+    title: Phase 3 dispatch and outage
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-7
+    title: Phase 3 repair and safety carve-outs
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52
+  - id: 84fabf16-ep-8
+    title: Phase 3 gate and push
+    sessionId: 84fabf16-7782-4cae-b12f-dd6623878c52

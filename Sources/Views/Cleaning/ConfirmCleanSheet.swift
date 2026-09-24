@@ -33,12 +33,13 @@ struct ConfirmCleanSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: Design.spacingL) {
-                    ForEach(groups, id: \.category) { group in
-                        groupSection(group)
-                    }
                     if selection.requiresDestructiveConfirmation {
                         destructiveWarning
                     }
+                    ForEach(groups, id: \.category) { group in
+                        groupSection(group)
+                    }
+                    
                 }
                 .padding(Design.spacingL)
                 .frame(maxWidth: .infinity, alignment: .leading)
